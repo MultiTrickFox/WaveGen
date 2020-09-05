@@ -405,5 +405,5 @@ def adjust_config(configs):
     for k_saved,v_saved in configs:
         v = getattr(config, k_saved)
         if v != v_saved:
-            print(f'\tconflict resolved: {k_saved}; {v} -> {v_saved}')
+            print(f'\t{k_saved}: {v} -> {v_saved}')
             setattr(config,k_saved,v_saved)

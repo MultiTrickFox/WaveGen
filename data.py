@@ -36,8 +36,9 @@ def data_to_audio(data,meta):
 
     if config.zscore_scale:
 
-        _, mean, std = meta
+        _, mean, std, scale = meta
 
+        spec *= scale
         spec *= std
         spec += mean
 
@@ -102,15 +103,19 @@ def audio_to_data(signal, song_id):
         std = spec_mod.std() # 1 # std.resize(len(std),1)
         spec_mod -= mean
         spec_mod /= std
-        meta.extend([mean, std])
+        scale = max([abs(max(spec_mod)),abs(min(spec_mod))])
+        spec_mod /= scale
+
+        meta.extend([mean, std, scale])
         print('max min after std:', max(spec_mod), min(spec_mod))
 
-    elif config.minmax_scale: # no need to rescale [0,1] when done, it's already done so.)
+    elif config.minmax_scale:
 
         spec_min = min(spec_mod)
         spec_max = max(spec_mod)
         spec_mod -= spec_min
         spec_mod /= spec_max - spec_min
+
         meta.extend([spec_min, spec_max])
         print('max min after min/max:', max(spec_mod), min(spec_mod))
 

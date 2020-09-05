@@ -17,7 +17,7 @@ def main():
 
     data = load_data()
     model = load_model()
-    if not model:
+    if not model or config.fresh_model:
         model = make_model()
         if config.use_gpu:
             TorchModel(model).cuda()
