@@ -33,8 +33,8 @@ dev_ratio = .2
 hm_prev_steps = 0
 
 timestep_size = len(frequencies_range)
-in_size = timestep_size * (hm_prev_steps+1)
-out_size = len(frequencies_range)
+in_size = timestep_size*(hm_prev_steps+1)
+out_size = len(frequencies_range)+(hm_prev_steps+1)
 creation_info = [in_size,'l',500,'f', out_size]
 
 init_xavier = True

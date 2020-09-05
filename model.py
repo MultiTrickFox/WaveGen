@@ -189,6 +189,15 @@ def respond_to(model, sequences, states=None, do_grad=True):
 
             sub_seq_out, partial_states = prop_model(model, partial_states, sub_seq_inp)
 
+            if config.hm_prev_steps:
+                sub_seq_out1 = sub_seq_out[:,:len(config.frequencies_range)]
+                sub_seq_out2 = softmax(sub_seq_out[:,len(config.frequencies_range):], dim=1)
+
+                sub_seq_out = cat([sub_seq_inp[:,:-config.timestep_size],sub_seq_out1], dim=1)
+                sub_seq_out = sub_seq_out.view(sub_seq_out.size(0),sub_seq_out2.size(1),config.timestep_size)
+                sub_seq_out2 = sub_seq_out2.view(sub_seq_out2.size(0),sub_seq_out2.size(1),1)
+                sub_seq_out = (sub_seq_out * sub_seq_out2).sum(1)
+
             responses.append(sub_seq_out)
             loss += sequence_loss(sub_seq_lbl, sub_seq_out, do_grad=do_grad)
 
@@ -204,10 +213,9 @@ def respond_to(model, sequences, states=None, do_grad=True):
     if do_grad:
         return loss
     else:
-        try:
-            responses = cat(responses,dim=0).detach().numpy()
-        finally:
-            return loss, responses
+        if len(sequences) == 1:
+            responses = cat(responses,dim=0)
+        return loss, responses
 
 
 def sequence_loss(label, output, do_stack=False, do_grad=True, retain=True):
