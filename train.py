@@ -28,11 +28,15 @@ def main():
     elif config.batch_size > len(data):
         config.batch_size = len(data)
 
+    print(f'hm data: {len(data)}, hm dev: {len(data_dev)}, \ttraining started @ {now()}')
+
     data_losss, dev_losss = [], []
     if config.batch_size != len(data):
         data_losss.append(dev_loss(model, data))
     if config.dev_ratio:
         dev_losss.append(dev_loss(model, data_dev))
+
+    print(f'initial loss(es): {data_losss[-1] if data_losss else ""} {dev_losss[-1] if dev_losss else ""}, @ {now()}')
 
     for ep in range(config.hm_epochs):
 
