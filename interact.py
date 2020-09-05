@@ -13,7 +13,11 @@ d = data[:config.hm_wav_gen]
 for i,(seq,meta) in enumerate(d):
 
     from model import respond_to
-    seq = respond_to(model, [seq], do_grad=False)[-1]
+    _, seq = respond_to(model, [seq], do_grad=False)
+    seq = seq.detach()
+    if config.use_gpu:
+        seq = seq.cpu()
+    seq = seq.numpy()
 
     from data import data_to_audio
     seq = data_to_audio(seq, meta)

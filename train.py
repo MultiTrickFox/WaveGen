@@ -29,7 +29,7 @@ def main():
     elif config.batch_size > len(data):
         config.batch_size = len(data)
 
-    print(f'hm data: {len(data)}, hm dev: {len(data_dev)}, \ntraining started @ {now()}')
+    print(f'hm data: {len(data)}, hm dev: {len(data_dev)}, lr: {config.learning_rate}, \ntraining started @ {now()}')
 
     data_losss, dev_losss = [], []
     if config.batch_size != len(data):
