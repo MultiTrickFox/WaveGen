@@ -8,8 +8,6 @@ from data import load_data, split_dataset, batchify
 
 from torch import no_grad
 
-from numpy import ceil
-
 from matplotlib.pyplot import plot, show
 
 ##

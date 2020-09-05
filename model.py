@@ -296,7 +296,9 @@ def empty_states(model, batch_size=1):
 def load_model(path=None, fresh_meta=None, py_serialize=True):
     if not path: path = config.model_path
     if not fresh_meta: fresh_meta = config.fresh_meta
-    obj = pickle_load(path+'.pk')
+    if path[-3:] != '.pk':
+        path = path+'.pk'
+    obj = pickle_load(path)
     if obj:
         model, meta = obj
         if py_serialize:
@@ -313,6 +315,8 @@ def load_model(path=None, fresh_meta=None, py_serialize=True):
 
 def save_model(model, path=None, py_serialize=True):
     if not path: path = config.model_path
+    if path[-3:] != '.pk':
+        path = path+'.pk'
     if py_serialize:
         model = [type(layer)(*[getattr(layer,field).detach().numpy() for field in layer._fields]) for layer in model]
         meta = [[[e.detach().numpy() for e in ee] for ee in moments],[[e.detach().numpy() for e in ee] for ee in variances]]
@@ -359,7 +363,7 @@ class TorchModel(Module):
             for field, value in zip(layer._fields, converted):
                 setattr(self,f'layer{i}_{field}',value)
             setattr(self,f'type{i}',type(layer))
-            model[i] = (getattr(self, f'type{layer}'))(converted)
+            model[i] = (getattr(self, f'type{i}'))(*converted)
 
     def forward(self, states, inp):
         model = [(getattr(self,f'type{layer}'))(getattr(self,param) for param in dir(self) if f'layer{layer}' in param)

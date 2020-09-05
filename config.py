@@ -30,7 +30,7 @@ dev_ratio = .2
 
 ## model params
 
-hm_prev_steps = 5
+hm_prev_steps = 0
 
 timestep_size = len(frequencies_range)
 in_size = timestep_size * (hm_prev_steps+1)
@@ -55,6 +55,8 @@ optimizer = 'custom'
 model_path = 'model'
 fresh_meta = True
 
+use_gpu = False
+
 ## interact params
 
-hm_wav_gen = 5
+hm_wav_gen = 1
