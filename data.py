@@ -171,8 +171,13 @@ def main():
 def load_data(with_meta=False):
     from torch import Tensor
     data = pickle_load(config.data_path+'.pk')
-    if with_meta: return [[Tensor(sequence),meta] for sequence,meta in data]
-    else: return [Tensor(sequence) for sequence,_ in data]
+    data_tensors = []
+    for sequence,meta in data:
+        sequence = Tensor(sequence)
+        if config.use_gpu:
+            sequence = sequence.cuda()
+        data_tensors.append(sequence if not with_meta else [sequence,meta])
+    return data_tensors
 
 def split_dataset(data, dev_ratio=None, do_shuffle=False):
     if not dev_ratio: dev_ratio = config.dev_ratio

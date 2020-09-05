@@ -21,6 +21,10 @@ def main():
     model = load_model()
     if not model:
         model = make_model()
+        save_model(model)
+
+    if config.use_gpu:
+        TorchModel(model).cuda()
 
     data, data_dev = split_dataset(data)
     if not config.batch_size:
@@ -28,7 +32,7 @@ def main():
     elif config.batch_size > len(data):
         config.batch_size = len(data)
 
-    print(f'hm data: {len(data)}, hm dev: {len(data_dev)}, \ttraining started @ {now()}')
+    print(f'hm data: {len(data)}, hm dev: {len(data_dev)}, \ntraining started @ {now()}')
 
     data_losss, dev_losss = [], []
     if config.batch_size != len(data):
@@ -56,7 +60,9 @@ def main():
         data_losss.append(loss)
         if config.dev_ratio:
             dev_losss.append(dev_loss(model, data_dev))
+
         print(f'epoch {ep}, loss {loss}, dev loss {dev_losss[-1]}, completed @ {now()}', flush=True)
+        save_model(model,config.model_path+f'_ckp{ep}')
 
     data_losss.append(dev_loss(model, data))
     if config.dev_ratio:

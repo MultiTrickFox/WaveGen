@@ -181,6 +181,7 @@ def respond_to(model, sequences, states=None, do_grad=True):
                         sub_seq_inp2 = stack([sequences[i][t2] for i in has_remaining], dim=0) # if t < config.seq_force_len else sub_seq_out[links_to_prev[ii],] for ii, i in enumerate(has_remaining)], dim=0)
                     else:
                         sub_seq_inp2 = zeros(len(has_remaining),config.timestep_size)
+                        if config.use_gpu: sub_seq_inp2 = sub_seq_inp2.cuda()
                     sub_seq_inp.append(sub_seq_inp2)
                 sub_seq_inp = cat(sub_seq_inp, dim=1)
 
@@ -288,7 +289,7 @@ def empty_states(model, batch_size=1):
             state = zeros(batch_size, getattr(layer,layer._fields[0]).size(1))
             # if type(layer) == LSTM: # only for regular prop (prop2 is better.)
             #     state = cat([state]*2,dim=1)
-            states.append(state)
+            states.append(state if not config.use_gpu else state.cuda())
     return states
 
 
