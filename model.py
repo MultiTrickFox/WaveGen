@@ -155,12 +155,10 @@ def respond_to(model, sequences, states=None, do_grad=True):
     hm_windows = ceil(max_seq_len/config.seq_stride_len)
     has_remaining = list(range(len(sequences)))
 
-    print(f'\thm windows: {hm_windows}')
-
     for i in range(hm_windows):
 
-        if (i+1)%10==0:
-            print(f'\t\t{i}.. @ {now()}')
+        if (i+1)%50==0:
+            print(f'\t\t{i}/{hm_windows} @ {now()}')
 
         window_start = i*config.seq_stride_len
         window_end = min(window_start+config.seq_window_len, max_seq_len)
@@ -175,10 +173,22 @@ def respond_to(model, sequences, states=None, do_grad=True):
             sub_seq_inp = stack([sub_sequences[i][t] if t < config.seq_force_len else sub_seq_out[links_to_prev[ii],] for ii,i in enumerate(has_remaining)], dim=0)
             sub_seq_lbl = stack([sub_sequences[i][t+1] for i in has_remaining], dim=0)
 
+            if config.hm_prev_steps:
+                sub_seq_inp = [sub_seq_inp]
+                for t2 in range(1,config.hm_prev_steps+1):
+                    t2 = window_start+t-t2
+                    if t2>=0:
+                        sub_seq_inp2 = stack([sequences[i][t2] for i in has_remaining], dim=0) # if t < config.seq_force_len else sub_seq_out[links_to_prev[ii],] for ii, i in enumerate(has_remaining)], dim=0)
+                    else:
+                        sub_seq_inp2 = zeros(len(has_remaining),config.timestep_size)
+                    sub_seq_inp.append(sub_seq_inp2)
+                sub_seq_inp = cat(sub_seq_inp, dim=1)
+
             partial_states = [stack([row for i,row in enumerate(layer_state) if i in has_remaining]) for layer_state in states]
 
             sub_seq_out, partial_states = prop_model(model, partial_states, sub_seq_inp)
 
+            responses.append(sub_seq_out)
             loss += sequence_loss(sub_seq_lbl, sub_seq_out, do_grad=do_grad)
 
             for state, partial_state in zip(states, partial_states):
@@ -193,7 +203,10 @@ def respond_to(model, sequences, states=None, do_grad=True):
     if do_grad:
         return loss
     else:
-        return loss, responses
+        try:
+            responses = cat(responses,dim=0).detach().numpy()
+        finally:
+            return loss, responses
 
 
 def sequence_loss(label, output, do_stack=False, do_grad=True, retain=True):

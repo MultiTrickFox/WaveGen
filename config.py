@@ -1,4 +1,3 @@
-from glob import glob
 from librosa import fft_frequencies
 from librosa.core import frames_to_time
 
@@ -31,10 +30,12 @@ dev_ratio = .2
 
 ## model params
 
-timestep_size = len(frequencies_range) # + len(glob('data/*.wav'))*int(concat_id_info) + 12*int(concat_chroma_info)
-in_size = timestep_size
+hm_prev_steps = 5
+
+timestep_size = len(frequencies_range)
+in_size = timestep_size * (hm_prev_steps+1)
 out_size = len(frequencies_range)
-creation_info = [in_size, 'l', 500, 'f', out_size]
+creation_info = [in_size,'l',500,'f', out_size]
 
 init_xavier = True
 forget_bias = 0
@@ -51,7 +52,9 @@ gradient_clip = 0
 hm_epochs = 20
 optimizer = 'custom'
 
-model_path = 'model.pk'
+model_path = 'model'
 fresh_meta = True
 
 ## interact params
+
+hm_wav_gen = 5
