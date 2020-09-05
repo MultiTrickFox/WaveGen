@@ -308,9 +308,9 @@ def load_model(path=None, fresh_meta=None, py_serialize=True):
     if obj:
         model, meta = obj
         if py_serialize:
-            model = [type(layer)(*[tensor(getattr(layer,field),requires_grad=True) for field in layer._fields]) for layer in model]
+            model = [type(layer)(*[tensor(weight,requires_grad=True) for weight in layer._asdict().values()]) for layer in model]
             if config.use_gpu:
-                TorchModel(model).gpu()
+                TorchModel(model).cuda()
         global moments, variances
         if fresh_meta:
             moments, variances = [], []
@@ -330,14 +330,14 @@ def load_model(path=None, fresh_meta=None, py_serialize=True):
 def save_model(model, path=None, py_serialize=True):
     if not path: path = config.model_path
     path = path+'.pk'
-    model = [type(layer)(*[getattr(layer, field).detach() if not config.use_gpu else getattr(layer, field).detach().cpu() for field in layer._fields]) for layer in model]
+    model = [type(layer)(*[weight.detach() if not config.use_gpu else weight.detach().cpu() for weight in layer._asdict().values()]) for layer in model]
     if moments and variances:
         meta = [[[e.detach() if not config.use_gpu else e.detach().cpu() for e in ee] for ee in moments],
                 [[e.detach() if not config.use_gpu else e.detach().cpu() for e in ee] for ee in variances]]
     else:
         meta = [moments,variances]
     if py_serialize:
-        model = [[weight.numpy() for weight in layer._asdict().values()] for layer in model]
+        model = [type(layer)(*[weight.numpy() for weight in layer._asdict().values()]) for layer in model]
         if moments and variances:
             meta[0] = [[e.numpy() for e in ee] for ee in meta[0]]
             meta[1] = [[e.numpy() for e in ee] for ee in meta[1]]
