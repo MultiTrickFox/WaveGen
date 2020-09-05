@@ -177,7 +177,7 @@ def respond_to(model, sequences, states=None, do_grad=True):
                 sub_seq_inp = [sub_seq_inp]
                 for t2 in range(1,config.hm_prev_steps+1):
                     t2 = window_start+t-t2
-                    if t2>=0:
+                    if t2>=0:                                                           # todo: make dis part happen
                         sub_seq_inp2 = stack([sequences[i][t2] for i in has_remaining], dim=0) # if t < config.seq_force_len else sub_seq_out[links_to_prev[ii],] for ii, i in enumerate(has_remaining)], dim=0)
                     else:
                         sub_seq_inp2 = zeros(len(has_remaining),config.timestep_size)
@@ -314,7 +314,7 @@ def load_model(path=None, fresh_meta=None, py_serialize=True):
     path = path+'.pk'
     obj = pickle_load(path)
     if obj:
-        model, meta = obj
+        model, meta, configs = obj
         if py_serialize:
             model = [type(layer)(*[tensor(weight,requires_grad=True) for weight in layer._asdict().values()]) for layer in model]
             if config.use_gpu:
@@ -333,6 +333,7 @@ def load_model(path=None, fresh_meta=None, py_serialize=True):
                         for __,weight in enumerate(type(layer)._fields):
                             moments[_][__] = moments[_][__].cuda()
                             variances[_][__] = moments[_][__].cuda()
+        adjust_config(configs)
         return model
 
 def save_model(model, path=None, py_serialize=True):
@@ -349,7 +350,8 @@ def save_model(model, path=None, py_serialize=True):
         if moments and variances:
             meta[0] = [[e.numpy() for e in ee] for ee in meta[0]]
             meta[1] = [[e.numpy() for e in ee] for ee in meta[1]]
-    pickle_save([model,meta],path)
+    configs = [[field,getattr(config,field)] for field in dir(config) if field in config.config_to_save]
+    pickle_save([model,meta,configs],path)
 
 
 def collect_grads(model):
@@ -396,3 +398,12 @@ class TorchModel(Module):
         model = [(getattr(self,f'type{layer}'))(getattr(self,param) for param in dir(self) if f'layer{layer}' in param)
             for layer in range(len(states))]
         prop_model(model, states, inp)
+
+
+def adjust_config(configs):
+    print('loading configs from save..')
+    for k_saved,v_saved in configs:
+        v = getattr(config, k_saved)
+        if v != v_saved:
+            print(f'\tconflict resolved: {k_saved}; {v} -> {v_saved}')
+            setattr(config,k_saved,v_saved)

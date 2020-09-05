@@ -17,9 +17,9 @@ silence_thr_db = 0
 band_low_hz = 20
 band_high_hz = 20_000
 
-frequencies_of_bins = fft_frequencies(sample_rate, fft_bins)
+frequencies_of_bins = fft_frequencies(sample_rate, fft_bins).tolist()
 frequencies_range = [i for i,f in enumerate(frequencies_of_bins) if band_low_hz <= f <= band_high_hz]
-times_of_bins = lambda hm_steps: frames_to_time(range(0,hm_steps), sample_rate, fft_hop_len, fft_bins)
+_times_of_bins = lambda hm_steps: frames_to_time(range(0,hm_steps), sample_rate, fft_hop_len, fft_bins)
 
 zscore_scale = True
 minmax_scale = False
@@ -33,8 +33,8 @@ dev_ratio = .2
 hm_prev_steps = 0
 
 timestep_size = len(frequencies_range)
-in_size = timestep_size*(hm_prev_steps+1)
-out_size = len(frequencies_range)+(hm_prev_steps+1)
+in_size = timestep_size * (hm_prev_steps+1)
+out_size = len(frequencies_range) + (hm_prev_steps+1)*bool(hm_prev_steps)
 creation_info = [in_size,'l',500,'f', out_size]
 
 init_xavier = True
@@ -60,3 +60,11 @@ use_gpu = False
 ## interact params
 
 hm_wav_gen = 1
+
+##
+
+config_to_save = ['sample_rate', 'fft_bins', 'fft_window_len', 'fft_hop_len', 'mfcc_bins', 'mel_bins',
+                  'band_low_hz', 'band_high_hz', 'frequencies_of_bins', 'frequencies_range',
+                  'zscore_scale', 'minmax_scale', 'log_scale',
+                  'hm_prev_steps', 'timestep_size', 'in_size', 'out_size',
+                  'seq_window_len', 'seq_stride_len', 'seq_force_len',]
