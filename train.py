@@ -19,10 +19,9 @@ def main():
     model = load_model()
     if not model:
         model = make_model()
+        if config.use_gpu:
+            TorchModel(model).cuda()
         save_model(model)
-
-    if config.use_gpu:
-        TorchModel(model).cuda()
 
     data, data_dev = split_dataset(data)
     if not config.batch_size:

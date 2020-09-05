@@ -252,11 +252,18 @@ def adaptive_sgd(model, epoch_nr, lr, batch_size,
     if not batch_size: batch_size = config.batch_size
 
     global moments, variances
-
     if not (moments and variances):
         for layer in model:
-            moments.append([zeros(weight.size()) for weight in layer._asdict().values()])
-            variances.append([zeros(weight.size()) for weight in layer._asdict().values()])
+            moments.append([])
+            variances.append([])
+            for weight in layer._asdict().values():
+                moment = zeros(weight.size())
+                variance = zeros(weight.size())
+                if config.use_gpu:
+                    moment = moment.cuda()
+                    variance = variance.cuda()
+                moments[-1].append(moment)
+                variances[-1].append(variance)
 
     with no_grad():
 
@@ -296,33 +303,45 @@ def empty_states(model, batch_size=1):
 def load_model(path=None, fresh_meta=None, py_serialize=True):
     if not path: path = config.model_path
     if not fresh_meta: fresh_meta = config.fresh_meta
-    if path[-3:] != '.pk':
-        path = path+'.pk'
+    path = path+'.pk'
     obj = pickle_load(path)
     if obj:
         model, meta = obj
         if py_serialize:
             model = [type(layer)(*[tensor(getattr(layer,field),requires_grad=True) for field in layer._fields]) for layer in model]
+            if config.use_gpu:
+                TorchModel(model).gpu()
         global moments, variances
         if fresh_meta:
             moments, variances = [], []
         else:
             moments, variances = meta
-            if py_serialize:
-                moments = [[tensor(e) for e in ee] for ee in moments]
-                variances = [[tensor(e) for e in ee] for ee in variances]
+            if moments and variances:
+                if py_serialize:
+                    moments = [[tensor(e) for e in ee] for ee in moments]
+                    variances = [[tensor(e) for e in ee] for ee in variances]
+                if config.use_gpu:
+                    for _,layer in enumerate(model):
+                        for __,weight in enumerate(type(layer)._fields):
+                            moments[_][__] = moments[_][__].cuda()
+                            variances[_][__] = moments[_][__].cuda()
         return model
 
 def save_model(model, path=None, py_serialize=True):
     if not path: path = config.model_path
-    if path[-3:] != '.pk':
-        path = path+'.pk'
-    if py_serialize:
-        model = [type(layer)(*[getattr(layer,field).detach().numpy() for field in layer._fields]) for layer in model]
-        meta = [[[e.detach().numpy() for e in ee] for ee in moments],[[e.detach().numpy() for e in ee] for ee in variances]]
+    path = path+'.pk'
+    model = [type(layer)(*[getattr(layer, field).detach() if not config.use_gpu else getattr(layer, field).detach().cpu() for field in layer._fields]) for layer in model]
+    if moments and variances:
+        meta = [[[e.detach() if not config.use_gpu else e.detach().cpu() for e in ee] for ee in moments],
+                [[e.detach() if not config.use_gpu else e.detach().cpu() for e in ee] for ee in variances]]
     else:
         meta = [moments,variances]
-    pickle_save([model,meta],path+'.pk')
+    if py_serialize:
+        model = [[weight.numpy() for weight in layer._asdict().values()] for layer in model]
+        if moments and variances:
+            meta[0] = [[e.numpy() for e in ee] for ee in meta[0]]
+            meta[1] = [[e.numpy() for e in ee] for ee in meta[1]]
+    pickle_save([model,meta],path)
 
 
 def collect_grads(model):
