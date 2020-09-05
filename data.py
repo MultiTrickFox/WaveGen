@@ -60,7 +60,7 @@ def data_to_audio(data,meta):
     spec = concatenate([empty_lower_frequencies, spec], 0)
     spec = concatenate([spec, empty_higher_frequencies], 0)
 
-    signal_recons = griffinlim(spec, hop_length=config.hop_len, win_length=config.window_len)
+    signal_recons = griffinlim(spec, hop_length=config.fft_hop_len, win_length=config.fft_window_len)
     # signal_recons2 = mfcc_to_audio(mfccs, config.mel_bins)
 
     return signal_recons
@@ -71,12 +71,12 @@ def audio_to_data(signal, song_id):
     meta = [song_id]
 
     if config.silence_thr_db:
-        signal, _ = trim(signal, config.silence_thr_db, frame_length=config.fft_bins, hop_length=config.hop_len)
+        signal, _ = trim(signal, config.silence_thr_db, frame_length=config.fft_bins, hop_length=config.fft_hop_len)
         #signal = split(spec, default_db_min)
 
-    spec = abs(stft(signal, config.fft_bins, config.hop_len, config.window_len))
+    spec = abs(stft(signal, config.fft_bins, config.fft_hop_len, config.fft_window_len))
     mfccs = mfcc(signal, config.sample_rate, n_mfcc=config.mfcc_bins)
-    chroma = chroma_stft(signal, config.sample_rate, n_fft=config.fft_bins, hop_length=config.hop_len, win_length=config.window_len)
+    chroma = chroma_stft(signal, config.sample_rate, n_fft=config.fft_bins, hop_length=config.fft_hop_len, win_length=config.fft_window_len)
 
     # rows-frequencies , cols-times
     # show(specshow(spec, sr=default_sample_rate))
@@ -86,7 +86,7 @@ def audio_to_data(signal, song_id):
     spec_mod = deepcopy(spec)
     print('max min initially:', max(spec_mod), min(spec_mod))
 
-    spec_mod = spec_mod[config.frequencies_range[0]:config.frequencies_range[-1],]
+    spec_mod = spec_mod[config.frequencies_range[0]:config.frequencies_range[-1]+1,]
     print('max min after bandpass:', max(spec_mod), min(spec_mod))
 
     spec_mod = amplitude_to_db(spec_mod)  # log scale.
@@ -113,18 +113,16 @@ def audio_to_data(signal, song_id):
         spec_mod -= spec_min
         spec_mod /= spec_max - spec_min
         meta.extend([spec_min, spec_max])
+        print('max min after min/max:', max(spec_mod), min(spec_mod))
 
     elif config.log_scale:
 
         spec_mod = log(spec_mod + 1e-10)
+        print('max min after log:', max(spec_mod), min(spec_mod))
 
     vector = spec_mod
-
-    if config.concat_id_info:
-        vector = concatenate([vector, array([song_id] * vector.shape[1]).T], 0)
-    if config.concat_chroma_info:
-        vector = concatenate([vector, chroma], 0)
-
+    # vector = concatenate([vector, array([song_id]*vector.shape[1]).T], 0)
+    # vector = concatenate([vector, chroma], 0)
     vector = vector.T  # now first index time, second index frequency
 
     # show(plot(vector.sum(1)))
@@ -154,11 +152,12 @@ def main():
         # reconstruct & save
         signal_recons = data_to_audio(data,meta)
         # write output
-        write(f'{file}_{file_id}.wav', config.sample_rate, signal_recons)
+        out_name = f'{file.split("/")[-1]}_{file_id}.wav'
+        write(out_name, config.sample_rate, signal_recons)
         # write('data/recons2.wav', config.sample_rate, signal_recons2)
 
         # display final
-        signal_recons, sample_rate = load(f'{file}_{file_id}.wav', config.sample_rate)
+        signal_recons, sample_rate = load(out_name, config.sample_rate)
         # print(signal.shape, signal_recons.shape)
         # for e1,e2 in zip(signal,signal_recons):
         #     input(f'{e1} / {e2}')
@@ -169,31 +168,35 @@ def main():
     print('saved datas.')
 
 
-def load_data(classification=False):
+def load_data(with_meta=False):
 
     from torch import Tensor
 
     data = pickle_load('datas.pk')
 
-    if not classification:
-        return [Tensor(sequence) for sequence,_ in data]
-
+    if with_meta:
+        return [[Tensor(sequence),meta] for sequence,meta in data]
     else:
-        return [[Tensor(sequence), Tensor([meta[0]]*sequence.shape[1])] for sequence,meta in data]
+        return [Tensor(sequence) for sequence,_ in data]
 
 
 def split_dataset(data, dev_ratio=0.2, do_shuffle=False):
+
     if do_shuffle: shuffle(data)
+
     hm_train = ceil(len(data)*(1-dev_ratio))
     data_dev = data[hm_train:]
     data = data[:hm_train]
     return data, data_dev
 
 def batchify(data, batch_size=config.batch_size, do_shuffle=False):
-    shuffle(data) if do_shuffle else None
+
+    if do_shuffle: shuffle(data)
+
     hm_batches = int(len(data)/batch_size)
     return [data[i*batch_size:(i+1)*batch_size] for i in range(hm_batches)] \
         if hm_batches else [data]
+
 
 
 

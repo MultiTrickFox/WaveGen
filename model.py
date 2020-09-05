@@ -9,6 +9,8 @@ from torch import float32, no_grad
 from torch.nn.init import xavier_normal_
 
 from collections import namedtuple
+from copy import deepcopy
+from math import ceil
 
 ##
 
@@ -140,34 +142,79 @@ def prop_model(model, states, inp):
     return out, new_states
 
 
-def respond_to(model, sequence, states=None):  # , wave_state=None):
+def respond_to(model, sequences, states=None, do_grad=True):
 
-    # TODO: fill out completely
+    responses = []
 
-    pass
+    loss = 0
+    sequences = deepcopy(sequences)
+    if not states:
+        states = empty_states(model, len(sequences))
+
+    max_seq_len = max(len(sequence) for sequence in sequences)
+
+    hm_windows = ceil(max_seq_len/config.seq_stride_len)
+    if not hm_windows:
+        hm_windows = 1
+
+    has_remaining = list(range(len(sequences)))
+
+    for i in range(hm_windows)[:5]: # todo: here for debug.
+
+        window_start = i*config.seq_stride_len
+        window_end = window_start + (config.seq_window_len if i!=hm_windows-1 else max_seq_len-config.seq_stride_len*(hm_windows-1))
+
+        sub_sequences = [sequence[window_start:window_end,] for sequence in sequences]
+
+        for t in range(window_end-window_start -1):
+
+            has_remaining_updated = [i for i in has_remaining if len(sub_sequences[i][t+1:t+2])]
+            links_to_prev = [has_remaining.index(i) for i in has_remaining_updated]
+            has_remaining = has_remaining_updated
+
+            sub_seq_inp = stack([sub_sequences[i][t] if t < config.seq_force_len else sub_seq_out[links_to_prev[i],] for i in has_remaining], dim=0)
+            sub_seq_lbl = stack([sub_sequences[i][t+1] for i in has_remaining], dim=0)
+
+            partial_states = [stack([row for i,row in enumerate(layer_state) if i in has_remaining]) for layer_state in states]
+
+            sub_seq_out, partial_states = prop_model(model, partial_states, sub_seq_inp)
+
+            if do_grad:
+                loss += sequence_loss(sub_seq_lbl, sub_seq_out)
+            else:
+                responses.append(sub_seq_out)
+
+            for state, partial_state in zip(states, partial_states):
+                for ii, i in enumerate(has_remaining):
+                    state[i] = partial_state[ii]
+
+            if t+2 == config.seq_stride_len:
+                states_to_transfer = [state.detach() for state in states]
+
+        states = states_to_transfer
+
+    if do_grad:
+        return loss
+    else:
+        return responses
 
 
-def sequence_loss(label, output, do_stack=True, do_grad=True):
+def sequence_loss(label, output, do_stack=False, do_grad=True, retain=True):
 
     if do_stack:
         label = stack(label,dim=0)
         output = stack(output,dim=0)
 
-    if config.loss_squared:
-        loss = pow(label-output,2).sum()
-    else:
-        loss = (label-output).abs().sum()
+    loss = pow(label-output,2) if config.loss_squared else (label-output).abs()
+    loss = loss.sum()
 
     if do_grad:
-        loss.backward(retain_graph=True)
+        loss.backward(retain_graph=retain)
 
     return float(loss)
 
 
-def sgd(model, lr=None, batch_size=None):
-
-    if not lr: lr = config.learning_rate
-    if not batch_size: batch_size = config.batch_size
+def sgd(model, lr, batch_size):
 
     with no_grad():
 
@@ -186,7 +233,7 @@ def sgd(model, lr=None, batch_size=None):
 
 moments, variances = [], []
 
-def adaptive_sgd(model, epoch_nr, lr=None, batch_size=None,
+def adaptive_sgd(model, epoch_nr, lr, batch_size,
                  alpha_moment=0.9,alpha_variance=0.999,epsilon=1e-8,
                  grad_scaling=False):
 
@@ -262,16 +309,6 @@ def save_model(model, path=None, py_serialize=True):
         meta = [moments,variances]
     pickle_save([model,meta],path+'.pk')
 
-def describe_model(model):
-    return f'{config.in_size} ' + ' '.join(str(type(layer)) + " " + str(getattr(layer, layer._fields[0]).size(1)) for layer in model)
-
-def combine_models(model1, model2, model1_nograd=True):
-    if model1_nograd:
-        for layer in model1:
-            for k,v in layer._asdict().items():
-                v.requires_grad = False
-    return model1 + model2
-
 
 def collect_grads(model):
     grads = [zeros(param.size()) for layer in model for param in layer._asdict().values()]
@@ -302,10 +339,10 @@ def give_grads(model, grads):
 
 from torch.nn import Module, Parameter
 
-class Convert2TorchModel(Module):
+class TorchModel(Module):
 
     def __init__(self, model):
-        super(Convert2TorchModel, self).__init__()
+        super(TorchModel, self).__init__()
         for i,layer in enumerate(model):
             converted = [Parameter(getattr(layer,field)) for field in layer._fields]
             for field, value in zip(layer._fields, converted):
