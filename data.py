@@ -133,7 +133,7 @@ def audio_to_data(signal, song_id):
 
 def main():
 
-    files = glob('data/*.wav') # + glob('data/*.mp3') # try ffmpeg -i input.mp3 output.wav
+    files = glob(config.data_path+'/*.wav') # + glob('data/*.mp3') # try ffmpeg -i input.mp3 output.wav
 
     converted = []
 
@@ -164,35 +164,30 @@ def main():
 
         # input("Continue to next..?")
 
-    pickle_save(converted, 'datas.pk')
-    print('saved datas.')
+    pickle_save(converted, config.data_path+'.pk')
+    print('saved data.')
 
 
 def load_data(with_meta=False):
-
     from torch import Tensor
+    data = pickle_load(config.data_path+'.pk')
+    if with_meta: return [[Tensor(sequence),meta] for sequence,meta in data]
+    else: return [Tensor(sequence) for sequence,_ in data]
 
-    data = pickle_load('datas.pk')
-
-    if with_meta:
-        return [[Tensor(sequence),meta] for sequence,meta in data]
+def split_dataset(data, dev_ratio=None, do_shuffle=False):
+    if not dev_ratio: dev_ratio = config.dev_ratio
+    if do_shuffle: shuffle(data)
+    if dev_ratio:
+        hm_train = int(len(data)*(1-dev_ratio))
+        data_dev = data[hm_train:]
+        data = data[:hm_train]
+        return data, data_dev
     else:
-        return [Tensor(sequence) for sequence,_ in data]
+        return data, []
 
-
-def split_dataset(data, dev_ratio=0.2, do_shuffle=False):
-
+def batchify(data, batch_size=None, do_shuffle=True):
+    if not batch_size: batch_size = config.batch_size
     if do_shuffle: shuffle(data)
-
-    hm_train = ceil(len(data)*(1-dev_ratio))
-    data_dev = data[hm_train:]
-    data = data[:hm_train]
-    return data, data_dev
-
-def batchify(data, batch_size=config.batch_size, do_shuffle=False):
-
-    if do_shuffle: shuffle(data)
-
     hm_batches = int(len(data)/batch_size)
     return [data[i*batch_size:(i+1)*batch_size] for i in range(hm_batches)] \
         if hm_batches else [data]

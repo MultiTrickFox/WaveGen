@@ -1,5 +1,5 @@
 import config
-from ext import pickle_save, pickle_load
+from ext import pickle_save, pickle_load, now
 
 from torch import tensor, Tensor, cat, stack
 from torch import zeros, ones, eye, randn
@@ -152,19 +152,19 @@ def respond_to(model, sequences, states=None, do_grad=True):
         states = empty_states(model, len(sequences))
 
     max_seq_len = max(len(sequence) for sequence in sequences)
-
     hm_windows = ceil(max_seq_len/config.seq_stride_len)
-    if not hm_windows:
-        hm_windows = 1
-
     has_remaining = list(range(len(sequences)))
 
-    for i in range(hm_windows)[:5]: # todo: here for debug.
+    print(f'\thm windows: {hm_windows}')
+
+    for i in range(hm_windows):
+
+        if (i+1)%10==0:
+            print(f'\t\t{i}.. @ {now()}')
 
         window_start = i*config.seq_stride_len
-        window_end = window_start + (config.seq_window_len if i!=hm_windows-1 else max_seq_len-config.seq_stride_len*(hm_windows-1))
-
-        sub_sequences = [sequence[window_start:window_end,] for sequence in sequences]
+        window_end = min(window_start+config.seq_window_len, max_seq_len)
+        sub_sequences = [sequence[window_start:window_end,:] for sequence in sequences]
 
         for t in range(window_end-window_start -1):
 
@@ -172,23 +172,20 @@ def respond_to(model, sequences, states=None, do_grad=True):
             links_to_prev = [has_remaining.index(i) for i in has_remaining_updated]
             has_remaining = has_remaining_updated
 
-            sub_seq_inp = stack([sub_sequences[i][t] if t < config.seq_force_len else sub_seq_out[links_to_prev[i],] for i in has_remaining], dim=0)
+            sub_seq_inp = stack([sub_sequences[i][t] if t < config.seq_force_len else sub_seq_out[links_to_prev[ii],] for ii,i in enumerate(has_remaining)], dim=0)
             sub_seq_lbl = stack([sub_sequences[i][t+1] for i in has_remaining], dim=0)
 
             partial_states = [stack([row for i,row in enumerate(layer_state) if i in has_remaining]) for layer_state in states]
 
             sub_seq_out, partial_states = prop_model(model, partial_states, sub_seq_inp)
 
-            if do_grad:
-                loss += sequence_loss(sub_seq_lbl, sub_seq_out)
-            else:
-                responses.append(sub_seq_out)
+            loss += sequence_loss(sub_seq_lbl, sub_seq_out, do_grad=do_grad)
 
             for state, partial_state in zip(states, partial_states):
                 for ii, i in enumerate(has_remaining):
                     state[i] = partial_state[ii]
 
-            if t+2 == config.seq_stride_len:
+            if t+1 == config.seq_stride_len:
                 states_to_transfer = [state.detach() for state in states]
 
         states = states_to_transfer
@@ -196,7 +193,7 @@ def respond_to(model, sequences, states=None, do_grad=True):
     if do_grad:
         return loss
     else:
-        return responses
+        return loss, responses
 
 
 def sequence_loss(label, output, do_stack=False, do_grad=True, retain=True):
