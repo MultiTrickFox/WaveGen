@@ -222,8 +222,9 @@ def respond_to(model, sequences, state=None, do_grad=True):
 
             out, ticket, partial_state = prop_model(model, partial_state, inp, partial_tickets, partial_responses)
 
-            responses.append([out[has_remaining.index(i),:] if i in has_remaining else None for i in range(len(sequences))])
-            tickets.append([ticket[has_remaining.index(i),:] if i in has_remaining else None for i in range(len(sequences))])
+            if t >= len(responses):
+                responses.append([out[has_remaining.index(i),:] if i in has_remaining else None for i in range(len(sequences))])
+                tickets.append([ticket[has_remaining.index(i),:] if i in has_remaining else None for i in range(len(sequences))])
 
             loss += sequence_loss(lbl, out, do_grad=do_grad)
 
@@ -244,8 +245,7 @@ def respond_to(model, sequences, state=None, do_grad=True):
         return loss
     else:
         if len(sequences) == 1:
-            responses = cat([ee for e in responses for ee in e],dim=0)
-            input(f'dis response size: {responses.size()}')
+            responses = stack([ee for e in responses for ee in e],dim=0)
         return loss, responses
 
 
@@ -330,9 +330,7 @@ def load_model(path=None, fresh_meta=None):
     if obj:
         model, meta, configs = obj
         if config.use_gpu:
-            if type(model) != TorchModel:
-                model = TorchModel(model)
-            model.cuda()
+            TorchModel(model).gpu()
         global moments, variances
         if fresh_meta:
             moments, variances = [], []
@@ -411,8 +409,9 @@ class TorchModel(Module):
         for sub_name, sub in model.items():
             for layer_name, layer in enumerate(sub):
                 for field_name, field in layer._asdict().items():
-                    param = Parameter(field)
-                    setattr(self,f'sub{sub_name}_layer{layer_name}_field{field_name}',param)
+                    if type(field) != Parameter:
+                        field = Parameter(field)
+                    setattr(self,f'sub{sub_name}_layer{layer_name}_field{field_name}',field)
                 setattr(self,f'sub{sub_name}_layertype{layer_name}',type(layer))
 
                 sub[layer_name] = (getattr(self, f'sub{sub_name}_layertype{layer_name}')) \

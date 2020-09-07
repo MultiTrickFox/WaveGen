@@ -30,7 +30,7 @@ dev_ratio = 0
 
 ## model params
 
-ticket_size = 10 # len(frequencies_range)//4 # ?
+ticket_size = len(frequencies_range)//4 # ?
 
 # originator etc hl here.
 

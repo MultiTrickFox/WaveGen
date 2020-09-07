@@ -3,8 +3,9 @@ import config
 from model import load_model
 model = load_model()
 
-from data import load_data
+from data import load_data, split_data
 data = load_data(with_meta=True)
+data, _ = split_data(data)
 
 from random import shuffle
 shuffle(data)

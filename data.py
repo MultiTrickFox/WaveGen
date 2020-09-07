@@ -139,8 +139,6 @@ def main():
 
     files = glob(config.data_path+'/*.wav') # + glob('data/*.mp3') # try ffmpeg -i input.mp3 output.wav
 
-    # proceed to separately processing each file
-
     converted = []
 
     for file_id, file in enumerate(files):
