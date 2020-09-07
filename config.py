@@ -26,16 +26,13 @@ minmax_scale = False
 log_scale = False
 
 data_path = 'data'
-dev_ratio = .2
+dev_ratio = 0
 
 ## model params
 
-hm_prev_steps = 0
+ticket_size = 10 # len(frequencies_range)//4 # ?
 
-timestep_size = len(frequencies_range)
-in_size = timestep_size * (hm_prev_steps+1)
-out_size = len(frequencies_range) + (hm_prev_steps+1)*bool(hm_prev_steps)
-creation_info = [in_size,'l',500,'f', out_size]
+# originator etc hl here.
 
 init_xavier = True
 forget_bias = 0
@@ -47,7 +44,7 @@ seq_force_len = seq_window_len//2
 loss_squared = False
 
 learning_rate = .01
-batch_size = 4 # 0
+batch_size = 0
 gradient_clip = 0
 hm_epochs = 20
 optimizer = 'custom'
@@ -67,5 +64,5 @@ hm_wav_gen = 1
 config_to_save = ['sample_rate', 'fft_bins', 'fft_window_len', 'fft_hop_len', 'mfcc_bins', 'mel_bins',
                   'band_low_hz', 'band_high_hz', 'frequencies_of_bins', 'frequencies_range',
                   'zscore_scale', 'minmax_scale', 'log_scale',
-                  'hm_prev_steps', 'timestep_size', 'in_size', 'out_size',
+                  'ticket_size',
                   'seq_window_len', 'seq_stride_len', 'seq_force_len',]

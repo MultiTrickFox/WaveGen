@@ -4,7 +4,7 @@ from model import make_model, respond_to
 from model import load_model, save_model
 from model import TorchModel
 from model import sgd, adaptive_sgd
-from data import load_data, split_dataset, batchify
+from data import load_data, split_data, batchify_data
 
 from torch import no_grad
 
@@ -16,14 +16,17 @@ from matplotlib.pyplot import plot, show
 def main():
 
     data = load_data()
-    model = load_model()
-    if not model or config.fresh_model:
-        model = make_model()
-        if config.use_gpu:
-            TorchModel(model).cuda()
-        save_model(model)
+    model = make_model()
+    # if config.fresh_model:
+    #     save_model(make_model())
+    #     model = load_model()
+    # else:
+    #     model = load_model()
+    #     if not model:
+    #         save_model(make_model())
+    #         model = load_model()
 
-    data, data_dev = split_dataset(data)
+    data, data_dev = split_data(data)
     if not config.batch_size:
         config.batch_size = len(data) # len(data_dev)
     elif config.batch_size > len(data):
@@ -37,13 +40,13 @@ def main():
     if config.dev_ratio:
         dev_losss.append(dev_loss(model, data_dev))
 
-    print(f'initial loss(es): {data_losss[-1] if data_losss else ""} {dev_losss[-1] if dev_losss else ""}, @ {now()}')
+    print(f'initial loss(es): {data_losss[-1] if data_losss else ""} {dev_losss[-1] if dev_losss else ""}')
 
     for ep in range(config.hm_epochs):
 
         loss = 0
 
-        for i, batch in enumerate(batchify(data)):
+        for i, batch in enumerate(batchify_data(data)):
 
             print(f'\tbatch {i}, started @ {now()}', flush=True)
 

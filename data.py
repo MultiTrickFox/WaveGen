@@ -56,12 +56,12 @@ def data_to_audio(data,meta):
     spec = db_to_amplitude(spec)
 
     empty_lower_frequencies = zeros((config.frequencies_range[0], spec.shape[1]), spec.dtype)
-    empty_higher_frequencies = zeros((len(config.frequencies_of_bins)-config.frequencies_range[-1], spec.shape[1]), spec.dtype)
+    empty_higher_frequencies = zeros((len(config.frequencies_of_bins)-(config.frequencies_range[-1]+1), spec.shape[1]), spec.dtype)
     spec = concatenate([empty_lower_frequencies, spec], 0)
     spec = concatenate([spec, empty_higher_frequencies], 0)
 
     signal_recons = griffinlim(spec, hop_length=config.fft_hop_len, win_length=config.fft_window_len)
-    # signal_recons2 = mfcc_to_audio(mfccs, config.mel_bins)
+    # signal_recons = mfcc_to_audio(mfccs, config.mel_bins)
 
     return signal_recons
 
@@ -72,42 +72,42 @@ def audio_to_data(signal, song_id):
 
     if config.silence_thr_db:
         signal, _ = trim(signal, config.silence_thr_db, frame_length=config.fft_bins, hop_length=config.fft_hop_len)
-        #signal = split(spec, default_db_min)
 
     spec = abs(stft(signal, config.fft_bins, config.fft_hop_len, config.fft_window_len))
-    mfccs = mfcc(signal, config.sample_rate, n_mfcc=config.mfcc_bins)
-    chroma = chroma_stft(signal, config.sample_rate, n_fft=config.fft_bins, hop_length=config.fft_hop_len, win_length=config.fft_window_len)
+    # mfccs = mfcc(signal, config.sample_rate, n_mfcc=config.mfcc_bins)
+    # chroma = chroma_stft(signal, config.sample_rate, n_fft=config.fft_bins, hop_length=config.fft_hop_len, win_length=config.fft_window_len)
 
-    # rows-frequencies , cols-times
-    # show(specshow(spec, sr=default_sample_rate))
-    # show(specshow(mfccs, sr=default_sample_rate))
+    # rows-frequencies cols-times
+    # show(specshow(spec, sr=default_sample_rate, hop_length=config.fft_hop_len))
+    # show(specshow(mfccs, sr=default_sample_rate, hop_length=config.fft_hop_len))
     # show(plot(chroma))
 
     spec_mod = deepcopy(spec)
-    print('max min initially:', max(spec_mod), min(spec_mod))
+    print('\tmax min initially:', max(spec_mod), min(spec_mod))
 
     spec_mod = spec_mod[config.frequencies_range[0]:config.frequencies_range[-1]+1,]
-    print('max min after bandpass:', max(spec_mod), min(spec_mod))
+    print('\tmax min after bandpass:', max(spec_mod), min(spec_mod))
+    # show(specshow(spec_mod, sr=default_sample_rate, hop_length=config.fft_hop_len))
 
-    spec_mod = amplitude_to_db(spec_mod)  # log scale.
-    print('max min in db:', max(spec_mod), min(spec_mod))
+    spec_mod = amplitude_to_db(spec_mod)
+    print('\tmax min in db:', max(spec_mod), min(spec_mod))
 
-    #spec_mod = clip(spec_mod, config.amp_min_thr_db, config.amp_max_thr_db)
-    print('clipped.')
-
-    # show(specshow(spec_mod, sr=default_sample_rate))
+    # spec_mod = clip(spec_mod, config.amp_min_thr_db, config.amp_max_thr_db)
+    # print('db clipped.')
 
     if config.zscore_scale:
 
-        mean = spec_mod.mean() # 1 # mean.resize(len(mean),1) # tdo: mean and std along an axis?
-        std = spec_mod.std() # 1 # std.resize(len(std),1)
+        mean = spec_mod.mean()
+        std = spec_mod.std()
         spec_mod -= mean
         spec_mod /= std
+
+        print('\tmax min after std:', max(spec_mod), min(spec_mod))
+
         scale = max([abs(max(spec_mod)),abs(min(spec_mod))])
         spec_mod /= scale
 
         meta.extend([mean, std, scale])
-        print('max min after std:', max(spec_mod), min(spec_mod))
 
     elif config.minmax_scale:
 
@@ -116,21 +116,21 @@ def audio_to_data(signal, song_id):
         spec_mod -= spec_min
         spec_mod /= spec_max - spec_min
 
+        print('\tmax min after min/max:', max(spec_mod), min(spec_mod))
+
         meta.extend([spec_min, spec_max])
-        print('max min after min/max:', max(spec_mod), min(spec_mod))
 
     elif config.log_scale:
 
         spec_mod = log(spec_mod + 1e-10)
-        print('max min after log:', max(spec_mod), min(spec_mod))
+
+        print('\tmax min after log:', max(spec_mod), min(spec_mod))
 
     vector = spec_mod
-    # vector = concatenate([vector, array([song_id]*vector.shape[1]).T], 0)
     # vector = concatenate([vector, chroma], 0)
-    vector = vector.T  # now first index time, second index frequency
+    vector = vector.T # now first index time, second index frequency
 
-    # show(plot(vector.sum(1)))
-    print('final vector shape:', vector.shape)
+    print('\tfinal vector shape:', vector.shape)
 
     return vector, meta
 
@@ -139,34 +139,55 @@ def main():
 
     files = glob(config.data_path+'/*.wav') # + glob('data/*.mp3') # try ffmpeg -i input.mp3 output.wav
 
+    # gather initial info from all files
+
+    for file in files:
+        signal = load(file, config.sample_rate)[0]
+        spec = abs(stft(signal, config.fft_bins, config.fft_hop_len, config.fft_window_len))
+        #show(specshow(spec, sr=config.sample_rate, hop_length=config.fft_hop_len))
+        print('\tmax min initially:', max(spec), min(spec))
+        log_spec = amplitude_to_db(spec)  # log scale.
+        print('\tmax min in db:', max(spec), min(spec))
+
+        freq_strength_avgs = spec.sum(1)/spec.shape[1]
+        freq_strength_allavg = spec.sum()/(spec.shape[0]*spec.shape[1])
+        print(f'total avg strength: {freq_strength_allavg}')
+        for freq_hz, freq_strength_avg in zip(config.frequencies_of_bins, freq_strength_avgs):
+            if freq_strength_avg <= freq_strength_allavg:
+                print(f'> freq {freq_hz} has LESS strength {freq_strength_avg}')
+            else:
+                print(f'freq {freq_hz} has enough strength {freq_strength_avg}')
+
+        low_limit = 20
+        high_limit = 2000
+        frequencies_range = [i for i, f in enumerate(config.frequencies_of_bins) if low_limit<=f<=high_limit]
+        config.frequencies_range = frequencies_range
+        spec = spec[frequencies_range[0]:frequencies_range[-1]+1,]
+
+        #show(specshow(spec, sr=config.sample_rate, hop_length=config.fft_hop_len))
+
+        input(f'with bandpass, timestep size: {len(config.frequencies_of_bins)} -> {len(frequencies_range)}')
+    # set config params here.
+    input('proceed ..?')
+
+    # proceed to separately processing each file
+
     converted = []
 
     for file_id, file in enumerate(files):
 
         print(f'reading: {file}')
-
         song_id = [0 if i == file_id else 1 for i in range(len(files))]
 
-        # read file
+        # analysis
         signal, sample_rate = load(file, config.sample_rate)
-        # show(plot(signal))
         data, meta = audio_to_data(signal, song_id)
         converted.append([data,meta])
 
-        # reconstruct & save
+        # synthesis
         signal_recons = data_to_audio(data,meta)
-        # write output
-        out_name = f'{file.split("/")[-1]}_{file_id}.wav'
-        write(out_name, config.sample_rate, signal_recons)
-        # write('data/recons2.wav', config.sample_rate, signal_recons2)
-
-        # display final
-        signal_recons, sample_rate = load(out_name, config.sample_rate)
-        # print(signal.shape, signal_recons.shape)
-        # for e1,e2 in zip(signal,signal_recons):
-        #     input(f'{e1} / {e2}')
-
-        # input("Continue to next..?")
+        write(f'{file.split("/")[-1]}_{file_id}.wav', config.sample_rate, signal_recons)
+        signal_recons, sample_rate = load(f'{file.split("/")[-1]}_{file_id}.wav', config.sample_rate)
 
     pickle_save(converted, config.data_path+'.pk')
     print('saved data.')
@@ -183,7 +204,7 @@ def load_data(with_meta=False):
         data_tensors.append(sequence if not with_meta else [sequence,meta])
     return data_tensors
 
-def split_dataset(data, dev_ratio=None, do_shuffle=False):
+def split_data(data, dev_ratio=None, do_shuffle=False):
     if not dev_ratio: dev_ratio = config.dev_ratio
     if do_shuffle: shuffle(data)
     if dev_ratio:
@@ -194,7 +215,7 @@ def split_dataset(data, dev_ratio=None, do_shuffle=False):
     else:
         return data, []
 
-def batchify(data, batch_size=None, do_shuffle=True):
+def batchify_data(data, batch_size=None, do_shuffle=True):
     if not batch_size: batch_size = config.batch_size
     if do_shuffle: shuffle(data)
     hm_batches = int(len(data)/batch_size)
@@ -207,30 +228,3 @@ def batchify(data, batch_size=None, do_shuffle=True):
 
 if __name__ == '__main__':
     main()
-
-
-
-
-
-# Extra(s)
-
-# import scipy
-# import numpy as np
-#
-# def stft(x, fftsize=1024, overlap=4):
-#     hop = int(fftsize / overlap)
-#     w = scipy.hanning(fftsize+1)[:-1]      # better reconstruction with this trick +1)[:-1]
-#     return np.array([np.fft.rfft(w*x[i:i+fftsize]) for i in range(0, len(x)-fftsize, hop)])
-#
-# def istft(X, overlap=4):
-#     fftsize=(X.shape[1]-1)*2
-#     hop = int(fftsize / overlap)
-#     w = scipy.hanning(fftsize+1)[:-1]
-#     x = scipy.zeros(X.shape[0]*hop)
-#     wsum = scipy.zeros(X.shape[0]*hop)
-#     for n,i in enumerate(range(0, len(x)-fftsize, hop)):
-#         x[i:i+fftsize] += scipy.real(np.fft.irfft(X[n])) * w   # overlap-add
-#         wsum[i:i+fftsize] += w ** 2.
-#     pos = wsum != 0
-#     x[pos] /= wsum[pos]
-#     return x

@@ -99,26 +99,27 @@ def prop_Llayer2(layer, state, input):
 
 def prop_Flayer(layer, inp):
 
-    return tanh(inp@layer.w) # + layer.b)
+    # return tanh(inp@layer.w) # + layer.b)
+    return inp@layer.w
+
 
 
 prop_layer = {
-    LSTM: prop_Llayer2,
+    LSTM: prop_Llayer,
     FF: prop_Flayer,
 }
 
 
-def make_model(info=None):
+def make_submodel(info=None):
 
-    if not info: info = config.creation_info
+    if not info: info = [len(config.frequencies_range),'l',len(config.frequencies_range)]
 
     layer_sizes = [e for e in info if type(e)==int]
     layer_types = [e for e in info if type(e)==str]
 
     return [make_layer[layer_type](layer_sizes[i], layer_sizes[i+1]) for i,layer_type in enumerate(layer_types)]
 
-
-def prop_model(model, states, inp):
+def prop_submodel(model, states, inp):
     new_states = []
 
     out = inp
@@ -142,14 +143,61 @@ def prop_model(model, states, inp):
     return out, new_states
 
 
-def respond_to(model, sequences, states=None, do_grad=True):
+def make_model(hls=None):
+    if not hls: hls = [['l'], ['l'], ['f'], ['f'],]
+    return {
+        'originator': make_submodel([len(config.frequencies_range)] + hls[0] + [config.ticket_size]),
+        'creator'   : make_submodel([config.ticket_size] + hls[1] + [len(config.frequencies_range)]),
+        'attender'  : make_submodel([config.ticket_size*2] + hls[2] + [1]),
+        'keeper'    : make_submodel([len(config.frequencies_range)*2] + hls[3] + [1]),
+    }
+
+def prop_model(model, states, inp, prev_tickets, prev_outs):
+
+    ticket, originator_states  = prop_submodel(model['originator'], states[0], inp)
+    new, creator_states = prop_submodel(model['creator'], states[1], ticket)
+
+    if prev_tickets is not None:
+        attended = prop_attender(model['attender'], ticket, prev_tickets, prev_outs)
+        keep, keeper_states = prop_submodel(model['keeper'], states[2], cat([new,attended],dim=1))
+        keep = sigmoid(keep)
+        out = keep*attended + (1-keep)*new
+    else:
+        keeper_states = states[2]
+        out = new
+
+    return out, ticket, [originator_states,creator_states,keeper_states]
+
+
+def prop_attender(attender, ticket, prev_tickets, prev_outs):
+
+    ticket = ticket.view(1,ticket.size(0),ticket.size(1))
+
+    print(ticket.size())
+    print(prev_tickets.size())
+    print(prev_outs.size())
+
+    ticket = ticket.repeat(prev_tickets.size(0), 1,1)
+    inp = cat([ticket,prev_tickets], dim=2)
+
+    print(inp.size())
+
+    attentions, _ = prop_submodel(attender, [], inp)
+
+    attended_out = (prev_outs * softmax(attentions,dim=0)).sum(0)
+
+    return attended_out
+
+
+def respond_to(model, sequences, state=None, do_grad=True):
 
     responses = []
+    tickets = []
 
     loss = 0
     sequences = deepcopy(sequences)
-    if not states:
-        states = empty_states(model, len(sequences))
+    if not state:
+        state = empty_state(model, len(sequences))
 
     max_seq_len = max(len(sequence) for sequence in sequences)
     hm_windows = ceil(max_seq_len/config.seq_stride_len)
@@ -162,59 +210,51 @@ def respond_to(model, sequences, states=None, do_grad=True):
 
         window_start = i*config.seq_stride_len
         window_end = min(window_start+config.seq_window_len, max_seq_len)
-        sub_sequences = [sequence[window_start:window_end,:] for sequence in sequences]
 
-        for t in range(window_end-window_start -1):
+        for window_t in range(window_end-window_start -1):
 
-            has_remaining_updated = [i for i in has_remaining if len(sub_sequences[i][t+1:t+2])]
-            links_to_prev = [has_remaining.index(i) for i in has_remaining_updated]
-            has_remaining = has_remaining_updated
+            t = window_start+window_t
 
-            sub_seq_inp = stack([sub_sequences[i][t] if t < config.seq_force_len else sub_seq_out[links_to_prev[ii],] for ii,i in enumerate(has_remaining)], dim=0)
-            sub_seq_lbl = stack([sub_sequences[i][t+1] for i in has_remaining], dim=0)
+            print(f't: {t}')
 
-            if config.hm_prev_steps:
-                sub_seq_inp = [sub_seq_inp]
-                for t2 in range(1,config.hm_prev_steps+1):
-                    t2 = window_start+t-t2
-                    if t2>=0:                                                           # todo: make dis part happen
-                        sub_seq_inp2 = stack([sequences[i][t2] for i in has_remaining], dim=0) # if t < config.seq_force_len else sub_seq_out[links_to_prev[ii],] for ii, i in enumerate(has_remaining)], dim=0)
-                    else:
-                        sub_seq_inp2 = zeros(len(has_remaining),config.timestep_size)
-                        if config.use_gpu: sub_seq_inp2 = sub_seq_inp2.cuda()
-                    sub_seq_inp.append(sub_seq_inp2)
-                sub_seq_inp = cat(sub_seq_inp, dim=1)
+            has_remaining = [i for i in has_remaining if len(sequences[i][t+1:t+2])]
 
-            partial_states = [stack([row for i,row in enumerate(layer_state) if i in has_remaining]) for layer_state in states]
+            inp = stack([sequences[i][t] if window_t<=config.seq_force_len else responses[t-1][i] for i in has_remaining], dim=0)
+            lbl = stack([sequences[i][t+1] for i in has_remaining], dim=0)
 
-            sub_seq_out, partial_states = prop_model(model, partial_states, sub_seq_inp)
+            partial_state = [[stack([layer_state[i] for i in has_remaining], dim=0) for layer_state in submodel_state] for submodel_state in state]
+            if t:
+                partial_tickets = cat([cat([ticket[i].view(1,1,-1) for ticket in tickets], dim=0) for i in has_remaining], dim=1)
+                partial_responses = cat([cat([response[i].view(1,1,-1) for response in responses], dim=0) for i in has_remaining], dim=1)
+            else:
+                partial_tickets, partial_responses = None, None
 
-            if config.hm_prev_steps:
-                sub_seq_out1 = sub_seq_out[:,:len(config.frequencies_range)]
-                sub_seq_out2 = softmax(sub_seq_out[:,len(config.frequencies_range):], dim=1)
+            out, ticket, partial_state = prop_model(model, partial_state, inp, partial_tickets, partial_responses)
 
-                sub_seq_out = cat([sub_seq_inp[:,:-config.timestep_size],sub_seq_out1], dim=1)
-                sub_seq_out = sub_seq_out.view(sub_seq_out.size(0),sub_seq_out2.size(1),config.timestep_size)
-                sub_seq_out2 = sub_seq_out2.view(sub_seq_out2.size(0),sub_seq_out2.size(1),1)
-                sub_seq_out = (sub_seq_out * sub_seq_out2).sum(1)
+            responses.append([out[has_remaining.index(i),:] if i in has_remaining else None for i in range(len(sequences))])
+            tickets.append([ticket[has_remaining.index(i),:] if i in has_remaining else None for i in range(len(sequences))])
 
-            responses.append(sub_seq_out)
-            loss += sequence_loss(sub_seq_lbl, sub_seq_out, do_grad=do_grad)
+            loss += sequence_loss(lbl, out, do_grad=do_grad)
 
-            for state, partial_state in zip(states, partial_states):
-                for ii, i in enumerate(has_remaining):
-                    state[i] = partial_state[ii]
+            for sub_state, sub_partial_state in zip(state, partial_state):
+                for s, ps in zip(sub_state, sub_partial_state):
+                    for ii,i in enumerate(has_remaining):
+                        s[i] = ps[ii]
 
-            if t+1 == config.seq_stride_len:
-                states_to_transfer = [state.detach() for state in states]
+            if window_t+1 == config.seq_stride_len:
+                state_to_transfer = [[ee.detach() for ee in e] for e in state]
 
-        states = states_to_transfer
+        state = state_to_transfer
+
+        responses = [[ee.detach() for ee in e] for e in responses]
+        tickets = [[ee.detach() for ee in e] for e in tickets]
 
     if do_grad:
         return loss
     else:
         if len(sequences) == 1:
-            responses = cat(responses,dim=0)
+            responses = cat([ee for e in responses for ee in e],dim=0)
+            input(f'dis response size: {responses.size()}')
         return loss, responses
 
 
@@ -261,22 +301,13 @@ def adaptive_sgd(model, epoch_nr, lr, batch_size,
 
     global moments, variances
     if not (moments and variances):
-        for layer in model:
-            moments.append([])
-            variances.append([])
-            for weight in layer._asdict().values():
-                moment = zeros(weight.size())
-                variance = zeros(weight.size())
-                if config.use_gpu:
-                    moment = moment.cuda()
-                    variance = variance.cuda()
-                moments[-1].append(moment)
-                variances[-1].append(variance)
+        moments = [[zeros(weight.size()) if not config.use_gpu else zeros(weight.size()).cuda() for weight in layer._asdict().values()] for layer in model]
+        variances = [[zeros(weight.size()) if not config.use_gpu else zeros(weight.size()).cuda() for weight in layer._asdict().values()] for layer in model]
 
     with no_grad():
 
         for _, layer in enumerate(model):
-            for __, weight in enumerate(getattr(layer,field) for field in layer._fields):
+            for __, weight in enumerate(layer._asdict().values()):
                 if weight.requires_grad:
 
                     lr_ = lr
@@ -297,17 +328,6 @@ def adaptive_sgd(model, epoch_nr, lr, batch_size,
                     weight.grad = None
 
 
-def empty_states(model, batch_size=1):
-    states = []
-    for layer in model:
-        if type(layer) != FF:
-            state = zeros(batch_size, getattr(layer,layer._fields[0]).size(1))
-            # if type(layer) == LSTM: # only for regular prop (prop2 is better.)
-            #     state = cat([state]*2,dim=1)
-            states.append(state if not config.use_gpu else state.cuda())
-    return states
-
-
 def load_model(path=None, fresh_meta=None, py_serialize=True):
     if not path: path = config.model_path
     if not fresh_meta: fresh_meta = config.fresh_meta
@@ -317,8 +337,8 @@ def load_model(path=None, fresh_meta=None, py_serialize=True):
         model, meta, configs = obj
         if py_serialize:
             model = [type(layer)(*[tensor(weight,requires_grad=True) for weight in layer._asdict().values()]) for layer in model]
-            if config.use_gpu:
-                TorchModel(model).cuda()
+        if config.use_gpu:
+            TorchModel(model).cuda()
         global moments, variances
         if fresh_meta:
             moments, variances = [], []
@@ -330,10 +350,14 @@ def load_model(path=None, fresh_meta=None, py_serialize=True):
                     variances = [[tensor(e) for e in ee] for ee in variances]
                 if config.use_gpu:
                     for _,layer in enumerate(model):
-                        for __,weight in enumerate(type(layer)._fields):
+                        for __,field in enumerate(layer._fields):
                             moments[_][__] = moments[_][__].cuda()
                             variances[_][__] = moments[_][__].cuda()
-        adjust_config(configs)
+        for k_saved, v_saved in configs:
+            v = getattr(config, k_saved)
+            if v != v_saved:
+                print(f'config conflict resolution: {k_saved} {v} -> {v_saved}')
+                setattr(config, k_saved, v_saved)
         return model
 
 def save_model(model, path=None, py_serialize=True):
@@ -354,8 +378,25 @@ def save_model(model, path=None, py_serialize=True):
     pickle_save([model,meta,configs],path)
 
 
+def empty_state(model, batch_size=1):
+    model_states = []
+    for k,v in model.items():
+        if k != 'attender':
+            states = []
+            for layer in v:
+                if type(layer) != FF:
+                    state = zeros(batch_size, getattr(layer,layer._fields[0]).size(1))
+                    if type(layer) == LSTM and prop_layer[LSTM] == prop_Llayer:
+                        state = cat([state]*2,dim=1)
+                    if config.use_gpu: state = state.cuda()
+                    states.append(state)
+            model_states.append(states)
+    return model_states
+
+
 def collect_grads(model):
     grads = [zeros(param.size()) for layer in model for param in layer._asdict().values()]
+    if config.use_gpu: grads = [e.cuda() for e in grads]
     ctr = -1
     for layer in model:
         for field in layer._fields:
@@ -378,7 +419,7 @@ def give_grads(model, grads):
             else: param.grad = grads[ctr]
 
 
-##
+
 
 
 from torch.nn import Module, Parameter
@@ -399,11 +440,3 @@ class TorchModel(Module):
             for layer in range(len(states))]
         prop_model(model, states, inp)
 
-
-def adjust_config(configs):
-    print('loading configs from save..')
-    for k_saved,v_saved in configs:
-        v = getattr(config, k_saved)
-        if v != v_saved:
-            print(f'\t{k_saved}: {v} -> {v_saved}')
-            setattr(config,k_saved,v_saved)
