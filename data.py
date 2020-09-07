@@ -139,37 +139,6 @@ def main():
 
     files = glob(config.data_path+'/*.wav') # + glob('data/*.mp3') # try ffmpeg -i input.mp3 output.wav
 
-    # gather initial info from all files
-
-    for file in files:
-        signal = load(file, config.sample_rate)[0]
-        spec = abs(stft(signal, config.fft_bins, config.fft_hop_len, config.fft_window_len))
-        #show(specshow(spec, sr=config.sample_rate, hop_length=config.fft_hop_len))
-        print('\tmax min initially:', max(spec), min(spec))
-        log_spec = amplitude_to_db(spec)  # log scale.
-        print('\tmax min in db:', max(spec), min(spec))
-
-        freq_strength_avgs = spec.sum(1)/spec.shape[1]
-        freq_strength_allavg = spec.sum()/(spec.shape[0]*spec.shape[1])
-        print(f'total avg strength: {freq_strength_allavg}')
-        for freq_hz, freq_strength_avg in zip(config.frequencies_of_bins, freq_strength_avgs):
-            if freq_strength_avg <= freq_strength_allavg:
-                print(f'> freq {freq_hz} has LESS strength {freq_strength_avg}')
-            else:
-                print(f'freq {freq_hz} has enough strength {freq_strength_avg}')
-
-        low_limit = 20
-        high_limit = 2000
-        frequencies_range = [i for i, f in enumerate(config.frequencies_of_bins) if low_limit<=f<=high_limit]
-        config.frequencies_range = frequencies_range
-        spec = spec[frequencies_range[0]:frequencies_range[-1]+1,]
-
-        #show(specshow(spec, sr=config.sample_rate, hop_length=config.fft_hop_len))
-
-        input(f'with bandpass, timestep size: {len(config.frequencies_of_bins)} -> {len(frequencies_range)}')
-    # set config params here.
-    input('proceed ..?')
-
     # proceed to separately processing each file
 
     converted = []

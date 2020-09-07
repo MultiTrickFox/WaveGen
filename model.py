@@ -172,15 +172,8 @@ def prop_model(model, states, inp, prev_tickets, prev_outs):
 def prop_attender(attender, ticket, prev_tickets, prev_outs):
 
     ticket = ticket.view(1,ticket.size(0),ticket.size(1))
-
-    print(ticket.size())
-    print(prev_tickets.size())
-    print(prev_outs.size())
-
     ticket = ticket.repeat(prev_tickets.size(0), 1,1)
     inp = cat([ticket,prev_tickets], dim=2)
-
-    print(inp.size())
 
     attentions, _ = prop_submodel(attender, [], inp)
 
@@ -214,8 +207,6 @@ def respond_to(model, sequences, state=None, do_grad=True):
         for window_t in range(window_end-window_start -1):
 
             t = window_start+window_t
-
-            print(f't: {t}')
 
             has_remaining = [i for i in has_remaining if len(sequences[i][t+1:t+2])]
 
@@ -301,8 +292,11 @@ def adaptive_sgd(model, epoch_nr, lr, batch_size,
 
     global moments, variances
     if not (moments and variances):
-        moments = [[zeros(weight.size()) if not config.use_gpu else zeros(weight.size()).cuda() for weight in layer._asdict().values()] for layer in model]
-        variances = [[zeros(weight.size()) if not config.use_gpu else zeros(weight.size()).cuda() for weight in layer._asdict().values()] for layer in model]
+        moments = [[[zeros(weight.size()) for weight in layer._asdict.values()] for layer in sub] for sub in model]
+        variances = [[[zeros(weight.size()) for weight in layer._asdict.values()] for layer in sub] for sub in model]
+        if config.use_gpu:
+            moments = [[[e3.cuda() for e3 in e2] for e2 in e1] for e1 in moments]
+            variances = [[[e3.cuda() for e3 in e2] for e2 in e1] for e1 in variances]
 
     with no_grad():
 
@@ -328,31 +322,25 @@ def adaptive_sgd(model, epoch_nr, lr, batch_size,
                     weight.grad = None
 
 
-def load_model(path=None, fresh_meta=None, py_serialize=True):
+def load_model(path=None, fresh_meta=None):
     if not path: path = config.model_path
     if not fresh_meta: fresh_meta = config.fresh_meta
     path = path+'.pk'
     obj = pickle_load(path)
     if obj:
         model, meta, configs = obj
-        if py_serialize:
-            model = [type(layer)(*[tensor(weight,requires_grad=True) for weight in layer._asdict().values()]) for layer in model]
         if config.use_gpu:
-            TorchModel(model).cuda()
+            if type(model) != TorchModel:
+                model = TorchModel(model)
+            model.cuda()
         global moments, variances
         if fresh_meta:
             moments, variances = [], []
         else:
             moments, variances = meta
-            if moments and variances:
-                if py_serialize:
-                    moments = [[tensor(e) for e in ee] for ee in moments]
-                    variances = [[tensor(e) for e in ee] for ee in variances]
-                if config.use_gpu:
-                    for _,layer in enumerate(model):
-                        for __,field in enumerate(layer._fields):
-                            moments[_][__] = moments[_][__].cuda()
-                            variances[_][__] = moments[_][__].cuda()
+            if config.use_gpu:
+                moments = [[[e3.cuda() for e3 in e2] for e2 in e1] for e1 in moments]
+                variances = [[[e3.cuda() for e3 in e2] for e2 in e1] for e1 in variances]
         for k_saved, v_saved in configs:
             v = getattr(config, k_saved)
             if v != v_saved:
@@ -360,20 +348,12 @@ def load_model(path=None, fresh_meta=None, py_serialize=True):
                 setattr(config, k_saved, v_saved)
         return model
 
-def save_model(model, path=None, py_serialize=True):
+def save_model(model, path=None):
+    from warnings import filterwarnings
+    filterwarnings("ignore")
     if not path: path = config.model_path
     path = path+'.pk'
-    model = [type(layer)(*[weight.detach() if not config.use_gpu else weight.detach().cpu() for weight in layer._asdict().values()]) for layer in model]
-    if moments and variances:
-        meta = [[[e.detach() if not config.use_gpu else e.detach().cpu() for e in ee] for ee in moments],
-                [[e.detach() if not config.use_gpu else e.detach().cpu() for e in ee] for ee in variances]]
-    else:
-        meta = [moments,variances]
-    if py_serialize:
-        model = [type(layer)(*[weight.numpy() for weight in layer._asdict().values()]) for layer in model]
-        if moments and variances:
-            meta[0] = [[e.numpy() for e in ee] for ee in meta[0]]
-            meta[1] = [[e.numpy() for e in ee] for ee in meta[1]]
+    meta = [moments, variances]
     configs = [[field,getattr(config,field)] for field in dir(config) if field in config.config_to_save]
     pickle_save([model,meta,configs],path)
 
@@ -428,15 +408,17 @@ class TorchModel(Module):
 
     def __init__(self, model):
         super(TorchModel, self).__init__()
-        for i,layer in enumerate(model):
-            converted = [Parameter(getattr(layer,field)) for field in layer._fields]
-            for field, value in zip(layer._fields, converted):
-                setattr(self,f'layer{i}_{field}',value)
-            setattr(self,f'type{i}',type(layer))
-            model[i] = (getattr(self, f'type{i}'))(*converted)
+        for sub_name, sub in model.items():
+            for layer_name, layer in enumerate(sub):
+                for field_name, field in layer._asdict().items():
+                    param = Parameter(field)
+                    setattr(self,f'sub{sub_name}_layer{layer_name}_field{field_name}',param)
+                setattr(self,f'sub{sub_name}_layertype{layer_name}',type(layer))
+
+                sub[layer_name] = (getattr(self, f'sub{sub_name}_layertype{layer_name}')) \
+                                    (*[getattr(self, f'sub{sub_name}_layer{layer_name}_field{field_name}') for field_name in
+                                        getattr(self, f'sub{sub_name}_layertype{layer_name}')._fields])
+        self.model = model
 
     def forward(self, states, inp):
-        model = [(getattr(self,f'type{layer}'))(getattr(self,param) for param in dir(self) if f'layer{layer}' in param)
-            for layer in range(len(states))]
-        prop_model(model, states, inp)
-
+        prop_model(self.model, states, inp)

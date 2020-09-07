@@ -16,15 +16,14 @@ from matplotlib.pyplot import plot, show
 def main():
 
     data = load_data()
-    model = make_model()
-    # if config.fresh_model:
-    #     save_model(make_model())
-    #     model = load_model()
-    # else:
-    #     model = load_model()
-    #     if not model:
-    #         save_model(make_model())
-    #         model = load_model()
+    if config.fresh_model:
+        save_model(make_model())
+        model = load_model()
+    else:
+        model = load_model()
+        if not model:
+            save_model(make_model())
+            model = load_model()
 
     data, data_dev = split_data(data)
     if not config.batch_size:
