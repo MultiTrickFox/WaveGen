@@ -30,10 +30,8 @@ dev_ratio = 0
 
 ## model params
 
-ticket_size = len(frequencies_range)//4 # ?
-
-# originator etc hl here.
-
+ticket_size = len(frequencies_range)//4   # ?
+sub_models = [['l'], ['l'], ['f'], ['f']] # orig, create, attend, keep
 init_xavier = True
 forget_bias = 0
 

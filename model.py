@@ -144,7 +144,8 @@ def prop_submodel(model, states, inp):
 
 
 def make_model(hls=None):
-    if not hls: hls = [['l'], ['l'], ['f'], ['f'],]
+    if not hls:
+        hls = [['l'], ['l'], ['f'], ['f']] if not config.sub_models else config.sub_models
     return {
         'originator': make_submodel([len(config.frequencies_range)] + hls[0] + [config.ticket_size]),
         'creator'   : make_submodel([config.ticket_size] + hls[1] + [len(config.frequencies_range)]),
@@ -176,7 +177,6 @@ def prop_attender(attender, ticket, prev_tickets, prev_outs):
     inp = cat([ticket,prev_tickets], dim=2)
 
     attentions, _ = prop_submodel(attender, [], inp)
-
     attended_out = (prev_outs * softmax(attentions,dim=0)).sum(0)
 
     return attended_out
@@ -330,7 +330,7 @@ def load_model(path=None, fresh_meta=None):
     if obj:
         model, meta, configs = obj
         if config.use_gpu:
-            TorchModel(model).gpu()
+            TorchModel(model).cuda()
         global moments, variances
         if fresh_meta:
             moments, variances = [], []
