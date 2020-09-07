@@ -225,6 +225,9 @@ def respond_to(model, sequences, state=None, do_grad=True):
             if t >= len(responses):
                 responses.append([out[has_remaining.index(i),:] if i in has_remaining else None for i in range(len(sequences))])
                 tickets.append([ticket[has_remaining.index(i),:] if i in has_remaining else None for i in range(len(sequences))])
+            else:
+                responses[t] = [out[has_remaining.index(i),:] if i in has_remaining else None for i in range(len(sequences))]
+                tickets[t] = [ticket[has_remaining.index(i),:] if i in has_remaining else None for i in range(len(sequences))]
 
             loss += sequence_loss(lbl, out, do_grad=do_grad)
 
@@ -238,8 +241,8 @@ def respond_to(model, sequences, state=None, do_grad=True):
 
         state = state_to_transfer
 
-        responses = [[ee.detach() for ee in e] for e in responses]
-        tickets = [[ee.detach() for ee in e] for e in tickets]
+        responses = [[ee.detach() if ee is not None else ee for ee in e] for e in responses]
+        tickets = [[ee.detach() if ee is not None else ee for ee in e] for e in tickets]
 
     if do_grad:
         return loss
@@ -268,17 +271,18 @@ def sgd(model, lr, batch_size):
 
     with no_grad():
 
-        for layer in model:
-            for param in layer._asdict().values():
-                if param.requires_grad:
+        for sub in model.values():
+            for layer in sub:
+                for param in layer._asdict().values():
+                    if param.requires_grad:
 
-                    param.grad /=batch_size
+                        param.grad /=batch_size
 
-                    if config.gradient_clip:
-                        param.grad.clamp(min=-config.gradient_clip,max=config.gradient_clip)
+                        if config.gradient_clip:
+                            param.grad.clamp(min=-config.gradient_clip,max=config.gradient_clip)
 
-                    param -= lr * param.grad
-                    param.grad = None
+                        param -= lr * param.grad
+                        param.grad = None
 
 
 moments, variances = [], []
@@ -292,34 +296,32 @@ def adaptive_sgd(model, epoch_nr, lr, batch_size,
 
     global moments, variances
     if not (moments and variances):
-        moments = [[[zeros(weight.size()) for weight in layer._asdict.values()] for layer in sub] for sub in model]
-        variances = [[[zeros(weight.size()) for weight in layer._asdict.values()] for layer in sub] for sub in model]
+        moments = [[[zeros(weight.size()) for weight in layer._asdict().values()] for layer in sub] for sub in model.values()]
+        variances = [[[zeros(weight.size()) for weight in layer._asdict().values()] for layer in sub] for sub in model.values()]
         if config.use_gpu:
             moments = [[[e3.cuda() for e3 in e2] for e2 in e1] for e1 in moments]
             variances = [[[e3.cuda() for e3 in e2] for e2 in e1] for e1 in variances]
 
     with no_grad():
+        for _, sub in enumerate(model.values()):
+            for __, layer in enumerate(sub):
+                for ___, weight in enumerate(layer._asdict().values()):
+                    if weight.requires_grad:
 
-        for _, layer in enumerate(model):
-            for __, weight in enumerate(layer._asdict().values()):
-                if weight.requires_grad:
+                        lr_ = lr
+                        weight.grad /= batch_size
 
-                    lr_ = lr
+                        if moments:
+                            moments[_][__][___] = alpha_moment * moments[_][__][___] + (1-alpha_moment) * weight.grad
+                            moment_hat = moments[_][__][___] / (1-alpha_moment**(epoch_nr+1))
+                        if variances:
+                            variances[_][__][___] = alpha_variance * variances[_][__][___] + (1-alpha_variance) * weight.grad**2
+                            variance_hat = variances[_][__][___] / (1-alpha_variance**(epoch_nr+1))
+                        if grad_scaling:
+                            lr_ *= norm(weight)/norm(weight.grad)
 
-                    weight.grad /= batch_size
-
-                    if moments:
-                        moments[_][__] = alpha_moment * moments[_][__] + (1-alpha_moment) * weight.grad
-                        moment_hat = moments[_][__] / (1-alpha_moment**(epoch_nr+1))
-                    if variances:
-                        variances[_][__] = alpha_variance * variances[_][__] + (1-alpha_variance) * weight.grad**2
-                        variance_hat = variances[_][__] / (1-alpha_variance**(epoch_nr+1))
-                    if grad_scaling:
-                        lr_ *= norm(weight)/norm(weight.grad)
-
-                    weight -= lr_ * (moment_hat if moments else weight.grad) / ((sqrt(variance_hat)+epsilon) if variances else 1)
-
-                    weight.grad = None
+                        weight -= lr_ * (moment_hat if moments else weight.grad) / ((sqrt(variance_hat)+epsilon) if variances else 1)
+                        weight.grad = None
 
 
 def load_model(path=None, fresh_meta=None):

@@ -27,7 +27,7 @@ def main():
 
     data, data_dev = split_data(data)
     if not config.batch_size:
-        config.batch_size = len(data) # len(data_dev)
+        config.batch_size = len(data_dev) if config.dev_ratio else len(data)
     elif config.batch_size > len(data):
         config.batch_size = len(data)
 
@@ -39,7 +39,8 @@ def main():
     if config.dev_ratio:
         dev_losss.append(dev_loss(model, data_dev))
 
-    print(f'initial loss(es): {data_losss[-1] if data_losss else ""} {dev_losss[-1] if dev_losss else ""}')
+    if data_losss or dev_losss:
+        print(f'initial loss(es): {data_losss[-1] if data_losss else ""} {dev_losss[-1] if dev_losss else ""}')
 
     for ep in range(config.hm_epochs):
 
@@ -60,7 +61,7 @@ def main():
         if config.dev_ratio:
             dev_losss.append(dev_loss(model, data_dev))
 
-        print(f'epoch {ep}, loss {loss}, dev loss {dev_losss[-1]}, completed @ {now()}', flush=True)
+        print(f'epoch {ep}, loss {loss}, dev loss {dev_losss[-1] if dev_losss else ""}, completed @ {now()}', flush=True)
         save_model(model,config.model_path+f'_ckp{ep}')
 
     data_losss.append(dev_loss(model, data))
