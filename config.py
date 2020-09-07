@@ -55,7 +55,11 @@ use_gpu = False
 
 ## interact params
 
+hm_extra_steps = seq_window_len
+
 hm_wav_gen = 1
+
+output_file = 'resp'
 
 ##
 

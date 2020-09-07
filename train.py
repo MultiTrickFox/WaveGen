@@ -2,7 +2,6 @@ import config
 from ext import now
 from model import make_model, respond_to
 from model import load_model, save_model
-from model import TorchModel
 from model import sgd, adaptive_sgd
 from data import load_data, split_data, batchify_data
 
@@ -19,18 +18,22 @@ def main():
     if config.fresh_model:
         save_model(make_model())
         model = load_model()
+        print('created model.')
     else:
         model = load_model()
         if not model:
             save_model(make_model())
             model = load_model()
+            print('created model.')
+        else:
+            print('loaded model.')
 
     data, data_dev = split_data(data)
     if not config.batch_size:
         config.batch_size = len(data_dev) if config.dev_ratio else len(data)
     elif config.batch_size > len(data):
         config.batch_size = len(data)
-
+    
     print(f'hm data: {len(data)}, hm dev: {len(data_dev)}, lr: {config.learning_rate}, \ntraining started @ {now()}')
 
     data_losss, dev_losss = [], []
@@ -73,16 +76,16 @@ def main():
     if config.dev_ratio:
         show(plot(dev_losss))
 
-    if input(f'Save model as {config.model_path}? (y/n): ').lower() == 'y':
-        save_model(load_model(), config.model_path + '_prev')
-        save_model(model)
+    # if input(f'Save model as {config.model_path}? (y/n): ').lower() == 'y':
+    #     save_model(load_model(), config.model_path + '_prev')
+    #     save_model(model)
 
     return model, [data_losss, dev_losss]
 
 
 def dev_loss(model, batch):
     with no_grad():
-        loss,_ = respond_to(model, batch, do_grad=False)
+        loss,_ = respond_to(model, batch, training_run=False)
     return loss /sum(len(sequence) for sequence in batch)
 
 

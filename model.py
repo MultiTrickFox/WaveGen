@@ -53,6 +53,9 @@ def make_Flayer(in_size, layer_size):
         # zeros(1, layer_size,       requires_grad=True, dtype=float32),
     )
 
+    if config.init_xavier:
+        xavier_normal_(layer.w)
+
     return layer
 
 
@@ -182,7 +185,7 @@ def prop_attender(attender, ticket, prev_tickets, prev_outs):
     return attended_out
 
 
-def respond_to(model, sequences, state=None, do_grad=True):
+def respond_to(model, sequences, state=None, training_run=True, extra_steps=0):
 
     responses = []
     tickets = []
@@ -196,10 +199,12 @@ def respond_to(model, sequences, state=None, do_grad=True):
     hm_windows = ceil(max_seq_len/config.seq_stride_len)
     has_remaining = list(range(len(sequences)))
 
+    print(f'\twindows: {hm_windows}')
+
     for i in range(hm_windows):
 
         if (i+1)%50==0:
-            print(f'\t\t{i}/{hm_windows} @ {now()}')
+            print(f'\t\t{i} @ {now()}')
 
         window_start = i*config.seq_stride_len
         window_end = min(window_start+config.seq_window_len, max_seq_len)
@@ -229,7 +234,7 @@ def respond_to(model, sequences, state=None, do_grad=True):
                 responses[t] = [out[has_remaining.index(i),:] if i in has_remaining else None for i in range(len(sequences))]
                 tickets[t] = [ticket[has_remaining.index(i),:] if i in has_remaining else None for i in range(len(sequences))]
 
-            loss += sequence_loss(lbl, out, do_grad=do_grad)
+            loss += sequence_loss(lbl, out, do_grad=training_run)
 
             for sub_state, sub_partial_state in zip(state, partial_state):
                 for s, ps in zip(sub_state, sub_partial_state):
@@ -244,11 +249,16 @@ def respond_to(model, sequences, state=None, do_grad=True):
         responses = [[ee.detach() if ee is not None else ee for ee in e] for e in responses]
         tickets = [[ee.detach() if ee is not None else ee for ee in e] for e in tickets]
 
-    if do_grad:
+    if training_run:
         return loss
     else:
+
+        for t_extra in range(extra_steps):
+            t = max_seq_len+t_extra
+
         if len(sequences) == 1:
             responses = stack([ee for e in responses for ee in e],dim=0)
+
         return loss, responses
 
 
@@ -353,7 +363,13 @@ def save_model(model, path=None):
     filterwarnings("ignore")
     if not path: path = config.model_path
     path = path+'.pk'
-    meta = [moments, variances]
+    if config.use_gpu:
+        moments_ = [[[e3.detach().cuda() for e3 in e2] for e2 in e1] for e1 in moments]
+        variances_ = [[[e3.detach().cuda() for e3 in e2] for e2 in e1] for e1 in variances]
+        meta = [moments_, variances_]
+        model = pull_copy_from_gpu(model)
+    else:
+        meta = [moments, variances]
     configs = [[field,getattr(config,field)] for field in dir(config) if field in config.config_to_save]
     pickle_save([model,meta,configs],path)
 
@@ -423,3 +439,7 @@ class TorchModel(Module):
 
     def forward(self, states, inp):
         prop_model(self.model, states, inp)
+
+
+def pull_copy_from_gpu(model):
+    return [[[weight.detach().cpu() for weight in layer._asdict().values()] for layer in sub] for sub in model.items()]

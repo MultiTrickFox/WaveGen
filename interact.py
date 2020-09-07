@@ -2,6 +2,9 @@ import config
 
 from model import load_model
 model = load_model()
+while not model:
+    config.model_path = input('valid model: ')
+    model = load_model()
 
 from data import load_data, split_data
 data = load_data(with_meta=True)
@@ -14,7 +17,7 @@ d = data[:config.hm_wav_gen]
 for i,(seq,meta) in enumerate(d):
 
     from model import respond_to
-    _, seq = respond_to(model, [seq], do_grad=False)
+    _, seq = respond_to(model, [seq], training_run=False, extra_steps=config.hm_extra_steps)
     seq = seq.detach()
     if config.use_gpu:
         seq = seq.cpu()
@@ -24,4 +27,4 @@ for i,(seq,meta) in enumerate(d):
     seq = data_to_audio(seq, meta)
 
     from data import write
-    write(f'resp{i}.wav', config.sample_rate, seq)
+    write(f'{config.output_file}{i}.wav', config.sample_rate, seq)
