@@ -28,7 +28,7 @@ def main():
         else:
             print('loaded model.')
 
-    data, data_dev = split_data(data)
+    data, data_dev = split_data(data) ; data[0] = data[0][:config.seq_window_len,:] # TODO: rm me.
     if not config.batch_size:
         config.batch_size = len(data_dev) if config.dev_ratio else len(data)
     elif config.batch_size > len(data):
@@ -51,27 +51,29 @@ def main():
 
         for i, batch in enumerate(batchify_data(data)):
 
-            print(f'\tbatch {i}, started @ {now()}', flush=True)
+            # print(f'\tbatch {i}, started @ {now()}', flush=True)
 
             batch_size = sum(len(sequence) for sequence in batch)
 
             loss += respond_to(model, batch)
-            sgd(model, config.learning_rate, batch_size) if config.optimizer == 'sgd' else \
-                adaptive_sgd(model, ep, config.learning_rate, batch_size)
+            sgd(model, batch_size=batch_size) if config.optimizer == 'sgd' else \
+                adaptive_sgd(model, batch_size=batch_size)
 
         loss /= sum(len(sequence) for sequence in data)
         data_losss.append(loss)
         if config.dev_ratio:
             dev_losss.append(dev_loss(model, data_dev))
 
-        print(f'epoch {ep}, loss {loss}, dev loss {dev_losss[-1] if dev_losss else ""}, completed @ {now()}', flush=True)
-        save_model(model,config.model_path+f'_ckp{ep}')
+        print(f'epoch {ep}, loss {loss}, dev loss {dev_losss[-1] if config.dev_ratio else ""}, completed @ {now()}', flush=True)
+        if config.ckp_per_ep:
+            if (ep+1)%config.ckp_per_ep == 0:
+                save_model(model,config.model_path+f'_ckp{ep}')
 
     data_losss.append(dev_loss(model, data))
     if config.dev_ratio:
         dev_losss.append(dev_loss(model, data_dev))
 
-    print(f'training ended @ {now()} \nfinal losses: {[data_losss[-1], dev_losss[-1]]}', flush=True)
+    print(f'training ended @ {now()} \nfinal losses: {data_losss[-1]}, {dev_losss[-1] if config.dev_ratio else ""}', flush=True)
     show(plot(data_losss))
     if config.dev_ratio:
         show(plot(dev_losss))

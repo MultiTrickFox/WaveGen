@@ -30,18 +30,24 @@ dev_ratio = 0
 
 ## model params
 
-ticket_size = len(frequencies_range)//4   # ?
-sub_models = [['l'], ['l'], ['f'], ['f']] # orig, create, attend, keep
+
+hm_steps_back = 0
+timestep_size = len(frequencies_range)
+in_size = timestep_size*(hm_steps_back+1)
+hm_modalities = 2
+out_size = timestep_size*hm_modalities*3
+creation_info = [in_size,'l',1024,'f',out_size]
+
 init_xavier = True
 forget_bias = 0
 
 seq_window_len = 50
 seq_stride_len = seq_window_len//2
-seq_force_len = seq_window_len//2
+seq_force_ratio = 1
 
 loss_squared = False
 
-learning_rate = .01
+learning_rate = 1e-4
 batch_size = 0
 gradient_clip = 0
 hm_epochs = 20
@@ -50,6 +56,7 @@ optimizer = 'custom'
 model_path = 'model'
 fresh_model = False
 fresh_meta = True
+ckp_per_ep = 1
 
 use_gpu = False
 
@@ -66,5 +73,5 @@ output_file = 'resp'
 config_to_save = ['sample_rate', 'fft_bins', 'fft_window_len', 'fft_hop_len', 'mfcc_bins', 'mel_bins',
                   'band_low_hz', 'band_high_hz', 'frequencies_of_bins', 'frequencies_range',
                   'zscore_scale', 'minmax_scale', 'log_scale',
-                  'ticket_size',
+                  'hm_steps_back', 'in_size', 'hm_modalities', 'out_size',
                   'seq_window_len', 'seq_stride_len', 'seq_force_len',]

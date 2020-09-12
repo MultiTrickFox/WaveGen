@@ -61,7 +61,7 @@ def data_to_audio(data,meta):
     spec = concatenate([spec, empty_higher_frequencies], 0)
 
     signal_recons = griffinlim(spec, hop_length=config.fft_hop_len, win_length=config.fft_window_len)
-    # signal_recons = mfcc_to_audio(mfccs, config.mel_bins)
+    # signal_recons2 = mfcc_to_audio(mfccs, config.mel_bins)
 
     return signal_recons
 
