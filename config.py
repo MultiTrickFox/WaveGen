@@ -1,6 +1,10 @@
 from librosa import fft_frequencies
 from librosa.core import frames_to_time
 
+## base params
+
+act_classical_rnn = False
+
 ## data params
 
 sample_rate = 8_000 # 22_050 # 44_100
@@ -30,33 +34,34 @@ dev_ratio = 0
 
 ## model params
 
-
 hm_steps_back = 0
 timestep_size = len(frequencies_range)
 in_size = timestep_size*(hm_steps_back+1)
-hm_modalities = 2
-out_size = timestep_size*hm_modalities*3
-creation_info = [in_size,'l',1024,'f',out_size]
+hm_modalities = 1
+out_size = timestep_size*hm_modalities*3 if not act_classical_rnn else timestep_size
+creation_info = [in_size,'l',512,'f',out_size]
 
 init_xavier = True
 forget_bias = 0
 
-seq_window_len = 50
-seq_stride_len = seq_window_len//2
+## train params
+
+seq_window_len = 3000
+seq_stride_len = seq_window_len-1
 seq_force_ratio = 1
 
-loss_squared = False
+loss_squared = True
 
-learning_rate = 1e-4
+learning_rate = 5e-4
 batch_size = 0
 gradient_clip = 0
-hm_epochs = 20
+hm_epochs = 500
 optimizer = 'custom'
 
-model_path = 'model'
-fresh_model = False
+model_path = 'models/model'
+fresh_model = True
 fresh_meta = True
-ckp_per_ep = 1
+ckp_per_ep = 50
 
 use_gpu = False
 

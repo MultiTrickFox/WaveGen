@@ -28,7 +28,7 @@ def main():
         else:
             print('loaded model.')
 
-    data, data_dev = split_data(data) ; data[0] = data[0][:config.seq_window_len,:] # TODO: rm me.
+    data, data_dev = split_data(data) # ; data = [e[:config.seq_window_len] for e in data] # TODO: !! rmove me !!
     if not config.batch_size:
         config.batch_size = len(data_dev) if config.dev_ratio else len(data)
     elif config.batch_size > len(data):
@@ -65,8 +65,7 @@ def main():
             dev_losss.append(dev_loss(model, data_dev))
 
         print(f'epoch {ep}, loss {loss}, dev loss {dev_losss[-1] if config.dev_ratio else ""}, completed @ {now()}', flush=True)
-        if config.ckp_per_ep:
-            if (ep+1)%config.ckp_per_ep == 0:
+        if config.ckp_per_ep and ((ep+1)%config.ckp_per_ep==0):
                 save_model(model,config.model_path+f'_ckp{ep}')
 
     data_losss.append(dev_loss(model, data))

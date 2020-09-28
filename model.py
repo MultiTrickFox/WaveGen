@@ -4,11 +4,14 @@ from ext import pickle_save, pickle_load, now
 from torch import tensor, Tensor, cat, stack
 from torch import zeros, ones, eye, randn
 from torch import sigmoid, tanh, relu, softmax
-from torch import pow, log, exp, sqrt, norm, mean
+from torch import pow, log, exp, sqrt, norm, mean, abs
 from torch import float32, no_grad
 from torch.nn.init import xavier_normal_
-from torch import normal
-from torch.nn.functional import elu
+
+from torch.distributions import Normal, Beta
+from torch import lgamma ; gamma = lambda x: exp(lgamma(x))
+from torch.distributions import LogisticNormal
+#from ext import LogitNormal
 
 from collections import namedtuple
 from copy import deepcopy
@@ -21,20 +24,21 @@ from numpy import sqrt as nsqrt
 
 
 FF = namedtuple('FF', 'w')
-LSTM = namedtuple('LSTM', 'wf bf wk bk wi bi ws bs')
+#LSTM = namedtuple('LSTM', 'wf bf wk bk wi bi ws bs')
+LSTM = namedtuple('LSTM', 'wf wk wi ws')
 
 
 def make_Llayer(in_size, layer_size):
 
     layer = LSTM(
         randn(in_size+layer_size, layer_size, requires_grad=True, dtype=float32),
-        zeros(1,                  layer_size, requires_grad=True, dtype=float32),
+        #zeros(1,                  layer_size, requires_grad=True, dtype=float32),
         randn(in_size+layer_size, layer_size, requires_grad=True, dtype=float32),
-        zeros(1,                  layer_size, requires_grad=True, dtype=float32),
+        #zeros(1,                  layer_size, requires_grad=True, dtype=float32),
         randn(in_size+layer_size, layer_size, requires_grad=True, dtype=float32),
-        zeros(1,                  layer_size, requires_grad=True, dtype=float32),
+        #zeros(1,                  layer_size, requires_grad=True, dtype=float32),
         randn(in_size+layer_size, layer_size, requires_grad=True, dtype=float32),
-        zeros(1,                  layer_size, requires_grad=True, dtype=float32),
+        #zeros(1,                  layer_size, requires_grad=True, dtype=float32),
     )
 
     with no_grad():
@@ -58,8 +62,9 @@ def make_Flayer(in_size, layer_size):
         # zeros(1, layer_size,       requires_grad=True, dtype=float32),
     )
 
-    # if config.init_xavier:
-    #     xavier_normal_(layer.w)
+    if config.init_xavier:
+        xavier_normal_(layer.w[:,:layer.w.size(1)//3])#, gain=5/3)
+        xavier_normal_(layer.w[:,layer.w.size(1)//3:layer.w.size(1)//3*2])#, gain=5/3)
 
     return layer
 
@@ -78,10 +83,10 @@ def prop_Llayer(layer, state, input):
 
     inp = cat([input,prev_out],dim=1)
 
-    reset  = sigmoid(inp@layer.wf + layer.bf)
-    write  = sigmoid(inp@layer.wk + layer.bk)
-    interm = tanh   (inp@layer.wi + layer.bi)
-    read   = sigmoid(inp@layer.ws + layer.bs)
+    reset  = sigmoid(inp@layer.wf)# + layer.bf)
+    write  = sigmoid(inp@layer.wk)# + layer.bk)
+    interm = tanh   (inp@layer.wi)# + layer.bi)
+    read   = sigmoid(inp@layer.ws)# + layer.bs)
 
     state = reset*state + write*interm
     out = read*tanh(state)
@@ -92,15 +97,12 @@ def prop_Llayer2(layer, state, input):
 
     inp = cat([input,state],dim=1)
 
-    forget = sigmoid(inp@layer.wf + layer.bf)
-    keep   = sigmoid(inp@layer.wk + layer.bk)
-    interm = tanh   (inp@layer.wi + layer.bi)
+    forget = sigmoid(inp@layer.wf)# + layer.bf)
+    keep   = sigmoid(inp@layer.wk)# + layer.bk)
+    interm = tanh   (inp@layer.wi)# + layer.bi)
+    show   = sigmoid(inp@layer.ws)  # + layer.bs)
 
     state  = forget*state + keep*interm
-    inp = cat([input,state],dim=1)
-
-    show   = sigmoid(inp@layer.ws + layer.bs)
-
     out = show*tanh(state)
 
     return out, state
@@ -111,9 +113,8 @@ def prop_Flayer(layer, inp):
     return inp@layer.w
 
 
-
 prop_layer = {
-    LSTM: prop_Llayer,
+    LSTM: prop_Llayer2,
     FF: prop_Flayer,
 }
 
@@ -148,44 +149,72 @@ def prop_model(model, states, inp):
 
         # dropout(out, inplace=True)
 
-    means = out[:,:config.out_size//3]
-    deviances = out[:,config.out_size//3:config.out_size//3*2]
-    multipliers = out[:,-config.out_size//3:]
+    # return out, new_states
 
-    deviances = exp(deviances) # deviances = elu(deviances)
-    multipliers = multipliers.view(multipliers.size(0), config.hm_modalities, config.timestep_size)
-    multipliers = softmax(multipliers, dim=1)
-    multipliers = multipliers.view(multipliers.size(0), config.hm_modalities * config.timestep_size)
+    if not config.act_classical_rnn:
 
-    return [means, deviances, multipliers], new_states
+        centers = out[:,:config.out_size//3]
+        spreads = out[:,config.out_size//3:config.out_size//3*2]
+        multipliers = out[:,-config.out_size//3:]
+
+        #spreads = exp(spreads)
+        # centers = (tanh(centers) +1)/2
+        # spreads = (tanh(spreads) +1)/2 /2 # exp(deviances) # elu(deviances) # softplus ?
+        centers = sigmoid(centers)
+        spreads = sigmoid(spreads)/2
+
+        centers = centers.view(centers.size(0), config.timestep_size, config.hm_modalities)
+        spreads = spreads.view(spreads.size(0), config.timestep_size, config.hm_modalities)
+
+        multipliers = multipliers.view(multipliers.size(0), config.timestep_size, config.hm_modalities)
+        multipliers = softmax(multipliers, -1)
+
+        out = [centers, spreads, multipliers]
+
+    else:
+
+        if config.creation_info[-2] == 'f':
+            out = tanh(out)
+
+    return out, new_states
 
 def distribution_loss(label, out):
 
-    means, deviances, multipliers = out
+    centers, spreads, multipliers = out
 
-    means = means.view(means.size(0), config.hm_modalities, config.timestep_size)
-    deviances = deviances.view(deviances.size(0), config.hm_modalities, config.timestep_size)
-    multipliers = multipliers.view(multipliers.size(0), config.hm_modalities, config.timestep_size)
-    label = label.repeat(1, config.hm_modalities, 1)
+    label = (label +1)/2
+    label = label.view(label.size(0),label.size(1),1).repeat(1,1,config.hm_modalities)
 
-    loss = 1/nsqrt(2*pi) * exp( -.5 * pow((label-means)/deviances,2) ) /deviances *multipliers
+    # normal
+    # loss = 1/nsqrt(2*pi) * exp( -.5 * pow((label-centers)/spreads,2) ) /spreads
 
-    loss = -log(loss.sum(1) + 1e-10)
+    # logitnormal
+    # loss = 1/nsqrt(2*pi) * 1/(label*(1-label)) /spreads * exp(-.5 * pow((log(label/(1-label))-centers)/spreads,2))
+    # works w/ 100 sequence len
+
+    # beta
+    n = centers*(1-centers)/pow(spreads,2)
+    beta_param1 = centers*n
+    beta_param2 = (1-centers)*n
+    loss = pow(label,beta_param1-1)*pow(1-label,beta_param2-1) / (gamma(beta_param1)*gamma(beta_param2)/gamma(beta_param1+beta_param2))
+    #loss = exp(Beta(beta_param1,beta_param2).log_prob(label))
+
+    loss = (loss*multipliers).sum(-1)
+    loss = -log(loss +1e-10)
 
     return loss.sum()
 
 def sample_from_out(out):
 
-    means, deviances, multipliers = out
+    centers, spreads, multipliers = out
 
-    sample = normal(means, deviances)
+    n = centers*(1-centers)/pow(spreads,2)
+    beta_param1 = centers*n
+    beta_param2 = (1-centers)*n
+    sample = Beta(beta_param1,beta_param2).rsample()
+    sample = (sample*multipliers).sum(-1)
 
-    sample = sample.view(sample.size(0), config.hm_modalities, config.timestep_size)
-    multipliers = multipliers.view(multipliers.size(0), config.hm_modalities, config.timestep_size)
-
-    sample = (sample*multipliers).sum(1)
-
-    return sample
+    return sample *2 -1
 
 
 def respond_to(model, sequences, state=None, training_run=True, extra_steps=0):
@@ -212,34 +241,44 @@ def respond_to(model, sequences, state=None, training_run=True, extra_steps=0):
 
             has_remaining = [i for i in has_remaining if len(sequences[i][t+1:t+2])]
 
-            inp = stack([sequences[i][t] for i in has_remaining],dim=0) *config.seq_force_ratio
-            if config.seq_force_ratio != 1:
-                if t:
-                    inp_plus = stack([responses[t-1][i] for i in has_remaining],dim=0) *(1-config.seq_force_ratio)
-                    inp = inp + inp_plus
+            if window_t:
+                inp = stack([sequences[i][t] for i in has_remaining],dim=0) *config.seq_force_ratio
+                if config.seq_force_ratio != 1:
+                    if t:
+                        inp_plus = stack([responses[t-1][i] for i in has_remaining],dim=0) *(1-config.seq_force_ratio)
+                        inp = inp + inp_plus
+            else:
+                inp = stack([sequences[i][t] for i in has_remaining], dim=0)
 
             lbl = stack([sequences[i][t+1] for i in has_remaining], dim=0)
 
             partial_state = [stack([layer_state[i] for i in has_remaining], dim=0) for layer_state in state]
 
-            for i in range(1,config.hm_steps_back+1):
-                t_prev = t-i
+            for ii in range(1,config.hm_steps_back+1):
+                t_prev = t-ii
+
                 if t_prev>=0:
                     prev_inp = stack([sequences[i][t_prev] for i in has_remaining],dim=0) *config.seq_force_ratio
                 else:
                     prev_inp = zeros(len(has_remaining),config.timestep_size) if not config.use_gpu else zeros(len(has_remaining),config.timestep_size).cuda()
+
                 if config.seq_force_ratio != 1:
                     if t_prev-1>=0:
                         prev_inp_plus = stack([responses[t_prev-1][i] for i in has_remaining], dim=0) *(1-config.seq_force_ratio)
                         prev_inp = prev_inp + prev_inp_plus
+
                 inp = cat([inp,prev_inp],dim=1)
 
             out, partial_state = prop_model(model, partial_state, inp)
 
-            loss += distribution_loss(lbl, out)
-            # loss += sequence_loss(lbl, out)
+            if not config.act_classical_rnn:
 
-            out = sample_from_out(out)
+                loss += distribution_loss(lbl, out)
+                out = sample_from_out(out)
+
+            else:
+
+                loss += classic_sequence_loss(lbl, out)
 
             if t >= len(responses):
                 responses.append([out[has_remaining.index(i),:] if i in has_remaining else None for i in range(len(sequences))])
@@ -272,7 +311,8 @@ def respond_to(model, sequences, state=None, training_run=True, extra_steps=0):
                         prev_responses[i-1] = sequences[0][t-1]
                 inp = cat([response.view(1,-1) for response in prev_responses],dim=1)
                 out, state = prop_model(model, state, inp)
-                out = sample_from_out(out)
+                if not config.act_classical_rnn:
+                    out = sample_from_out(out)
                 responses.append([out.view(-1)])
 
             responses = stack([ee for e in responses for ee in e], dim=0)
@@ -280,7 +320,7 @@ def respond_to(model, sequences, state=None, training_run=True, extra_steps=0):
         return float(loss), responses
 
 
-def sequence_loss(label, out, do_stack=False):
+def classic_sequence_loss(label, out, do_stack=False):
 
     if do_stack:
         label = stack(label,dim=0)
