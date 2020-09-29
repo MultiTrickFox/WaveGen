@@ -160,8 +160,8 @@ def prop_model(model, states, inp):
         #spreads = exp(spreads)
         # centers = (tanh(centers) +1)/2
         # spreads = (tanh(spreads) +1)/2 /2 # exp(deviances) # elu(deviances) # softplus ?
-        centers = sigmoid(centers)
-        spreads = sigmoid(spreads)/2
+        centers = sigmoid(centers) + 1e-4# 0,1
+        spreads = sigmoid(spreads) /4 + 4e-2 # 0,.25
 
         centers = centers.view(centers.size(0), config.timestep_size, config.hm_modalities)
         spreads = spreads.view(spreads.size(0), config.timestep_size, config.hm_modalities)

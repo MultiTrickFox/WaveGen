@@ -19,7 +19,9 @@ from librosa.feature import mfcc
 from librosa.feature.inverse import mfcc_to_audio
 
 from numpy import abs, log, power, e, sum, clip, max, argmax, min, argmin
-from numpy import zeros_like, zeros, array, tile, concatenate
+from numpy import zeros_like, zeros, array, tile
+from numpy import concatenate as cat
+from numpy import stack
 
 from librosa.display import specshow
 from matplotlib.pyplot import plot, show
@@ -31,7 +33,7 @@ from scipy.io.wavfile import write
 
 def data_to_audio(data,meta):
 
-    spec = deepcopy(data[:,:len(config.frequencies_range)])
+    spec = deepcopy(data[:,:len(config.frequencies_to_pick)])
     spec = spec.T
 
     if config.zscore_scale:
@@ -55,10 +57,8 @@ def data_to_audio(data,meta):
 
     spec = db_to_amplitude(spec)
 
-    empty_lower_frequencies = zeros((config.frequencies_range[0], spec.shape[1]), spec.dtype)
-    empty_higher_frequencies = zeros((len(config.frequencies_of_bins)-(config.frequencies_range[-1]+1), spec.shape[1]), spec.dtype)
-    spec = concatenate([empty_lower_frequencies, spec], 0)
-    spec = concatenate([spec, empty_higher_frequencies], 0)
+    spec = stack([spec[config.frequencies_to_pick.index(freq),:] if freq in config.frequencies_to_pick else zeros((spec.shape[1]))
+                    for freq in config.frequencies_of_bins],0)
 
     signal_recons = griffinlim(spec, hop_length=config.fft_hop_len, win_length=config.fft_window_len)
     # signal_recons2 = mfcc_to_audio(mfccs, config.mel_bins)
@@ -78,16 +78,16 @@ def audio_to_data(signal, song_id):
     # chroma = chroma_stft(signal, config.sample_rate, n_fft=config.fft_bins, hop_length=config.fft_hop_len, win_length=config.fft_window_len)
 
     # rows-frequencies cols-times
-    # show(specshow(spec, sr=default_sample_rate, hop_length=config.fft_hop_len))
-    # show(specshow(mfccs, sr=default_sample_rate, hop_length=config.fft_hop_len))
+    # show(specshow(spec, sr=config.sample_rate, hop_length=config.fft_hop_len))
+    # show(specshow(mfccs, sr=config.sample_rate, hop_length=config.fft_hop_len))
     # show(plot(chroma))
 
     spec_mod = deepcopy(spec)
     print('\tmax min initially:', max(spec_mod), min(spec_mod))
 
-    spec_mod = spec_mod[config.frequencies_range[0]:config.frequencies_range[-1]+1,]
+    spec_mod = stack([spec_mod[config.frequencies_of_bins.index(i),:] for i in config.frequencies_to_pick], 0)
     print('\tmax min after bandpass:', max(spec_mod), min(spec_mod))
-    # show(specshow(spec_mod, sr=default_sample_rate, hop_length=config.fft_hop_len))
+    # show(specshow(spec, sr=config.sample_rate, hop_length=config.fft_hop_len))
 
     spec_mod = amplitude_to_db(spec_mod)
     print('\tmax min in db:', max(spec_mod), min(spec_mod))
@@ -139,36 +139,38 @@ def main():
 
     files = glob(config.data_path+'/*.wav') # + glob('data/*.mp3') # try ffmpeg -i input.mp3 output.wav
 
-    # gather initial info from all files
+    if not config.frequencies_to_pick:
 
-    # for file in files:
-    #     signal = load(file, config.sample_rate)[0]
-    #     spec = abs(stft(signal, config.fft_bins, config.fft_hop_len, config.fft_window_len))
-    #     #show(specshow(spec, sr=config.sample_rate, hop_length=config.fft_hop_len))
-    #     print('\tmax min initially:', max(spec), min(spec))
-    #     log_spec = amplitude_to_db(spec)  # log scale.
-    #     print('\tmax min in db:', max(spec), min(spec))
-    #
-    #     freq_strength_avgs = spec.sum(1)/spec.shape[1]
-    #     freq_strength_allavg = spec.sum()/(spec.shape[0]*spec.shape[1])
-    #     print(f'total avg strength: {freq_strength_allavg}')
-    #     for freq_hz, freq_strength_avg in zip(config.frequencies_of_bins, freq_strength_avgs):
-    #         if freq_strength_avg <= freq_strength_allavg:
-    #             print(f'> freq {freq_hz} has LESS strength {freq_strength_avg}')
-    #         else:
-    #             print(f'freq {freq_hz} has enough strength {freq_strength_avg}')
-    #
-    #     low_limit = 20
-    #     high_limit = 2000
-    #     frequencies_range = [i for i, f in enumerate(config.frequencies_of_bins) if low_limit<=f<=high_limit]
-    #     config.frequencies_range = frequencies_range
-    #     spec = spec[frequencies_range[0]:frequencies_range[-1]+1,]
-    #
-    #     #show(specshow(spec, sr=config.sample_rate, hop_length=config.fft_hop_len))
-    #
-    #     input(f'with bandpass, timestep size: {len(config.frequencies_of_bins)} -> {len(frequencies_range)}')
-    # # set config params here.
-    # input('proceed ..?')
+        # gather initial info from all files
+
+        frequency_strengths = zeros(len(config.frequencies_of_bins))
+
+        for file in files:
+            signal = load(file, config.sample_rate)[0]
+            spec = abs(stft(signal, config.fft_bins, config.fft_hop_len, config.fft_window_len))
+            # print('\tmax min initially:', max(spec), min(spec))
+            # show(specshow(spec, sr=config.sample_rate, hop_length=config.fft_hop_len))
+
+            frequency_strengths += spec.sum(1)/spec.shape[1]
+
+        max_strength = max(frequency_strengths)
+        strength_thr = max_strength/config.frequency_strength_thr
+
+        band_low_hz = 999_999
+        band_high_hz = -1
+
+        for frequency, strength in zip(config.frequencies_of_bins,frequency_strengths):
+            if strength>=strength_thr:
+                config.frequencies_to_pick.append(frequency)
+                if frequency < band_low_hz: band_low_hz = frequency
+                if frequency > band_high_hz: band_low_hz = frequency
+
+        # spec = cat([spec[config.frequencies_of_bins.index(i),:] for i in config.frequencies_to_pick], 0)
+        # print('\tmax min after bandpass:', max(spec), min(spec))
+        # show(specshow(spec, sr=config.sample_rate, hop_length=config.fft_hop_len))
+
+        print(f'with bandpass, timestep size: {len(config.frequencies_of_bins)} -> {len(config.frequencies_to_pick)}')
+        print(f'copy paste this line into frequencies_to_pick @ config: \n{config.frequencies_to_pick}')
 
     # proceed to separately processing each file
 
