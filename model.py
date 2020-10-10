@@ -10,22 +10,20 @@ from torch.nn.init import xavier_normal_
 
 from torch.distributions import Normal, Beta
 from torch import lgamma ; gamma = lambda x: exp(lgamma(x))
-from torch.distributions import LogisticNormal
-#from ext import LogitNormal
 
 from collections import namedtuple
 from copy import deepcopy
 from math import ceil
 
-from numpy import pi
-from numpy import sqrt as nsqrt
-
 ##
 
 
 FF = namedtuple('FF', 'w')
-#LSTM = namedtuple('LSTM', 'wf bf wk bk wi bi ws bs')
+FFS = namedtuple('FFS', 'w')
+FFT = namedtuple('FFT', 'w')
+#FF = namedtuple('FF', 'w' 'b')
 LSTM = namedtuple('LSTM', 'wf wk wi ws')
+#LSTM = namedtuple('LSTM', 'wf bf wk bk wi bi ws bs')
 
 
 def make_Llayer(in_size, layer_size):
@@ -45,7 +43,6 @@ def make_Llayer(in_size, layer_size):
         for k,v in layer._asdict().items():
             if k == 'bf':
                 v += config.forget_bias
-        # layer.bf += config.forget_bias
 
     if config.init_xavier:
         xavier_normal_(layer.wf)
@@ -55,16 +52,25 @@ def make_Llayer(in_size, layer_size):
 
     return layer
 
-def make_Flayer(in_size, layer_size):
+def make_Flayer(in_size, layer_size, act=None):
 
-    layer = FF(
+    layer_type = FF if not act else (FFS if act=='s' else FFT)
+
+    layer = layer_type(
         randn(in_size, layer_size, requires_grad=True, dtype=float32),
         # zeros(1, layer_size,       requires_grad=True, dtype=float32),
     )
 
     if config.init_xavier:
-        xavier_normal_(layer.w[:,:layer.w.size(1)//3])#, gain=5/3)
-        xavier_normal_(layer.w[:,layer.w.size(1)//3:layer.w.size(1)//3*2])#, gain=5/3)
+
+        if not config.act_classical_rnn:
+            xavier_normal_(layer.w[:,:layer.w.size(1)//3])
+            xavier_normal_(layer.w[:,layer.w.size(1)//3:layer.w.size(1)//3*2])
+        else:
+            if act == 's':
+                xavier_normal_(layer.w)
+            elif act == 't':
+                xavier_normal_(layer.w, gain=5/3)
 
     return layer
 
@@ -72,23 +78,26 @@ def make_Flayer(in_size, layer_size):
 make_layer = {
     'l': make_Llayer,
     'f': make_Flayer,
+    'fs': lambda i,l: make_Flayer(i,l,act='s'),
+    'ft': lambda i,l: make_Flayer(i,l,act='t'),
 }
 
 
 def prop_Llayer(layer, state, input):
 
     layer_size = layer.wf.size(1)
+
     prev_out = state[:,:layer_size]
     state = state[:,layer_size:]
 
     inp = cat([input,prev_out],dim=1)
 
-    reset  = sigmoid(inp@layer.wf)# + layer.bf)
-    write  = sigmoid(inp@layer.wk)# + layer.bk)
-    interm = tanh   (inp@layer.wi)# + layer.bi)
-    read   = sigmoid(inp@layer.ws)# + layer.bs)
+    reset   = sigmoid(inp@layer.wf)# + layer.bf)
+    write   = sigmoid(inp@layer.wk)# + layer.bk)
+    context = tanh   (inp@layer.wi)# + layer.bi)
+    read    = sigmoid(inp@layer.ws)# + layer.bs)
 
-    state = reset*state + write*interm
+    state = reset*state + write*context
     out = read*tanh(state)
 
     return out, cat([out,state],dim=1)
@@ -102,7 +111,7 @@ def prop_Llayer2(layer, state, input):
     interm = tanh   (inp@layer.wi)# + layer.bi)
     show   = sigmoid(inp@layer.ws)  # + layer.bs)
 
-    state  = forget*state + keep*interm
+    state = forget*state + keep*interm
     out = show*tanh(state)
 
     return out, state
@@ -114,8 +123,10 @@ def prop_Flayer(layer, inp):
 
 
 prop_layer = {
-    LSTM: prop_Llayer2,
+    LSTM: prop_Llayer,
     FF: prop_Flayer,
+    FFS: lambda l,i: sigmoid(prop_Flayer(l,i)),
+    FFT: lambda l,i: tanh(prop_Flayer(l,i)),
 }
 
 
@@ -126,7 +137,12 @@ def make_model(info=None):
     layer_sizes = [e for e in info if type(e)==int]
     layer_types = [e for e in info if type(e)==str]
 
-    return [make_layer[layer_type](layer_sizes[i], layer_sizes[i+1]) for i,layer_type in enumerate(layer_types)]
+    model = [make_layer[layer_type](layer_sizes[i], layer_sizes[i+1]) for i,layer_type in enumerate(layer_types)]
+
+    if config.timestep_linear_encoding and layer_types[0]+layer_types[-1] == 'ff':
+        model[-1] = FF(*[v.transpose(0,1) for k,v in model[0]._asdict().items()])
+
+    return model
 
 def prop_model(model, states, inp):
     new_states = []
@@ -137,7 +153,7 @@ def prop_model(model, states, inp):
 
     for layer in model:
 
-        if type(layer) != FF:
+        if type(layer) not in [FF, FFS, FFT]:
 
             out, state = prop_layer[type(layer)](layer, states[state_ctr], out)
             new_states.append(state)
@@ -148,8 +164,6 @@ def prop_model(model, states, inp):
             out = prop_Flayer(layer, out)
 
         # dropout(out, inplace=True)
-
-    # return out, new_states
 
     if not config.act_classical_rnn:
 
@@ -171,12 +185,8 @@ def prop_model(model, states, inp):
 
         out = [centers, spreads, multipliers]
 
-    else:
-
-        if config.creation_info[-2] == 'f':
-            out = tanh(out)
-
     return out, new_states
+
 
 def distribution_loss(label, out):
 
@@ -217,6 +227,17 @@ def sample_from_out(out):
     return sample *2 -1
 
 
+def sequence_loss(label, out, do_stack=False):
+
+    if do_stack:
+        label = stack(label,dim=0)
+        out = stack(out, dim=0)
+
+    loss = pow(label-out, 2) if config.loss_squared else (label-out).abs()
+
+    return loss.sum()
+
+
 def respond_to(model, sequences, state=None, training_run=True, extra_steps=0):
 
     responses = []
@@ -233,52 +254,45 @@ def respond_to(model, sequences, state=None, training_run=True, extra_steps=0):
     for i in range(hm_windows):
 
         window_start = i*config.seq_stride_len
-        window_end = min(window_start+config.seq_window_len, max_seq_len)
+        is_last_window = window_start+config.seq_window_len>=max_seq_len
+        window_end = window_start+config.seq_window_len if not is_last_window else max_seq_len
 
         for window_t in range(window_end-window_start -1):
+
+            seq_force_ratio = config.seq_force_ratio**window_t
 
             t = window_start+window_t
 
             has_remaining = [i for i in has_remaining if len(sequences[i][t+1:t+2])]
 
             if window_t:
-                inp = stack([sequences[i][t] for i in has_remaining],dim=0) *config.seq_force_ratio
-                if config.seq_force_ratio != 1:
-                    if t:
-                        inp_plus = stack([responses[t-1][i] for i in has_remaining],dim=0) *(1-config.seq_force_ratio)
-                        inp = inp + inp_plus
+                inp = stack([sequences[i][t] for i in has_remaining],dim=0) *seq_force_ratio
+                if seq_force_ratio != 1:
+                    inp = inp + stack([responses[t-1][i] for i in has_remaining],dim=0) *(1-seq_force_ratio)
             else:
                 inp = stack([sequences[i][t] for i in has_remaining], dim=0)
+
+            for ii in range(1,config.hm_steps_back+1):
+                t_prev = t-ii
+                if t_prev>=0:
+                    prev_inp = stack([sequences[i][t_prev] for i in has_remaining],dim=0) *seq_force_ratio
+                else:
+                    prev_inp = zeros(len(has_remaining),config.timestep_size) if not config.use_gpu else zeros(len(has_remaining),config.timestep_size).cuda()
+                if seq_force_ratio != 1 and t_prev-1>=0:
+                    prev_inp = prev_inp + stack([responses[t_prev-1][i] for i in has_remaining], dim=0) *(1-seq_force_ratio)
+                inp = cat([inp,prev_inp],dim=1)
 
             lbl = stack([sequences[i][t+1] for i in has_remaining], dim=0)
 
             partial_state = [stack([layer_state[i] for i in has_remaining], dim=0) for layer_state in state]
 
-            for ii in range(1,config.hm_steps_back+1):
-                t_prev = t-ii
-
-                if t_prev>=0:
-                    prev_inp = stack([sequences[i][t_prev] for i in has_remaining],dim=0) *config.seq_force_ratio
-                else:
-                    prev_inp = zeros(len(has_remaining),config.timestep_size) if not config.use_gpu else zeros(len(has_remaining),config.timestep_size).cuda()
-
-                if config.seq_force_ratio != 1:
-                    if t_prev-1>=0:
-                        prev_inp_plus = stack([responses[t_prev-1][i] for i in has_remaining], dim=0) *(1-config.seq_force_ratio)
-                        prev_inp = prev_inp + prev_inp_plus
-
-                inp = cat([inp,prev_inp],dim=1)
-
             out, partial_state = prop_model(model, partial_state, inp)
 
             if not config.act_classical_rnn:
-
                 loss += distribution_loss(lbl, out)
                 out = sample_from_out(out)
-
             else:
-
-                loss += classic_sequence_loss(lbl, out)
+                loss += sequence_loss(lbl, out)
 
             if t >= len(responses):
                 responses.append([out[has_remaining.index(i),:] if i in has_remaining else None for i in range(len(sequences))])
@@ -292,9 +306,10 @@ def respond_to(model, sequences, state=None, training_run=True, extra_steps=0):
             if window_t+1 == config.seq_stride_len:
                 state_to_transfer = [e.detach() for e in state]
 
-        state = state_to_transfer
-
-        responses = [[r.detach() if r is not None else None for r in resp] if t>=window_start else resp for t,resp in enumerate(responses)]
+        if not is_last_window:
+            state = state_to_transfer
+            responses = [[r.detach() if r is not None else None for r in resp] if t>=window_start else resp for t,resp in enumerate(responses)]
+        else: break
 
     if training_run:
         loss.backward()
@@ -303,32 +318,27 @@ def respond_to(model, sequences, state=None, training_run=True, extra_steps=0):
     else:
 
         if len(sequences) == 1:
+
             for t_extra in range(extra_steps):
                 t = max_seq_len+t_extra-1
+
                 prev_responses = [response[0] for response in reversed(responses[-(config.hm_steps_back+1):])]
-                for i in range(1, config.hm_steps_back+1):
-                    if len(sequences[0][t-1:t]):
-                        prev_responses[i-1] = sequences[0][t-1]
-                inp = cat([response.view(1,-1) for response in prev_responses],dim=1)
+                # for i in range(1, config.hm_steps_back+1):
+                #     if len(sequences[0][t-1:t]):
+                #         prev_responses[i-1] = sequences[0][t-1]
+
+                inp = cat([response.view(1,-1) for response in prev_responses],dim=1) # todo: stack ?
+                
                 out, state = prop_model(model, state, inp)
+
                 if not config.act_classical_rnn:
                     out = sample_from_out(out)
+
                 responses.append([out.view(-1)])
 
             responses = stack([ee for e in responses for ee in e], dim=0)
 
         return float(loss), responses
-
-
-def classic_sequence_loss(label, out, do_stack=False):
-
-    if do_stack:
-        label = stack(label,dim=0)
-        out = stack(out, dim=0)
-
-    loss = pow(label-out, 2) if config.loss_squared else (label-out).abs()
-
-    return loss.sum()
 
 
 def sgd(model, lr=None, batch_size=None):
@@ -353,20 +363,19 @@ def sgd(model, lr=None, batch_size=None):
 
 moments, variances, ep_nr = [], [], 0
 
+
 def adaptive_sgd(model, lr=None, batch_size=None,
-                 alpha_moment=0.9,alpha_variance=0.999,epsilon=1e-8,
-                 grad_scaling=False):
+                 alpha_moment=0.9, alpha_variance=0.999, epsilon=1e-8,
+                 do_moments=True, do_variances=True, do_scaling=False):
 
     if not lr: lr = config.learning_rate
     if not batch_size: batch_size = config.batch_size
 
     global moments, variances, ep_nr
-    if not (moments and variances):
-        moments = [[zeros(weight.size()) for weight in layer._asdict().values()] for layer in model]
-        variances = [[zeros(weight.size()) for weight in layer._asdict().values()] for layer in model]
-        if config.use_gpu:
-            moments = [[e2.cuda() for e2 in e1] for e1 in moments]
-            variances = [[e2.cuda() for e2 in e1] for e1 in variances]
+    if not (moments or variances):
+        if do_moments: moments = [[zeros(weight.size()) if not config.use_gpu else zeros(weight.size()).cuda() for weight in layer._asdict().values()] for layer in model]
+        if do_variances: variances = [[zeros(weight.size()) if not config.use_gpu else zeros(weight.size()).cuda() for weight in layer._asdict().values()] for layer in model]
+
     ep_nr +=1
 
     with no_grad():
@@ -377,16 +386,16 @@ def adaptive_sgd(model, lr=None, batch_size=None,
                         lr_ = lr
                         weight.grad /= batch_size
 
-                        if moments:
+                        if do_moments:
                             moments[_][__] = alpha_moment * moments[_][__] + (1-alpha_moment) * weight.grad
                             moment_hat = moments[_][__] / (1-alpha_moment**(ep_nr+1))
-                        if variances:
+                        if do_variances:
                             variances[_][__] = alpha_variance * variances[_][__] + (1-alpha_variance) * weight.grad**2
                             variance_hat = variances[_][__] / (1-alpha_variance**(ep_nr+1))
-                        if grad_scaling:
+                        if do_scaling:
                             lr_ *= norm(weight)/norm(weight.grad)
 
-                        weight -= lr_ * (moment_hat if moments else weight.grad) / ((sqrt(variance_hat)+epsilon) if variances else 1)
+                        weight -= lr_ * (moment_hat if do_moments else weight.grad) / ((sqrt(variance_hat)+epsilon) if do_variances else 1)
                         weight.grad = None
 
 
@@ -434,7 +443,7 @@ def save_model(model, path=None):
 def empty_state(model, batch_size=1):
     states = []
     for layer in model:
-        if type(layer) != FF:
+        if type(layer) != FF and type(layer) != FFS and type(layer) != FFT:
             state = zeros(batch_size, getattr(layer,layer._fields[0]).size(1))
             if type(layer) == LSTM and prop_layer[LSTM] == prop_Llayer:
                 state = cat([state]*2,dim=1)
@@ -443,32 +452,7 @@ def empty_state(model, batch_size=1):
     return states
 
 
-def collect_grads(model):
-    grads = [zeros(param.size()) for layer in model for param in layer._asdict().values()]
-    if config.use_gpu: grads = [e.cuda() for e in grads]
-    ctr = -1
-    for layer in model:
-        for field in layer._fields:
-            ctr += 1
-            param = getattr(layer,field)
-            if param.requires_grad:
-                grads[ctr] += param.grad
-                param.grad = None
-
-    return grads
-
-def give_grads(model, grads):
-    ctr = -1
-    for layer in model:
-        for field in layer._fields:
-            ctr += 1
-            param = getattr(layer,field)
-            if param.grad:
-                param.grad += grads[ctr]
-            else: param.grad = grads[ctr]
-
-
-
+##
 
 
 from torch.nn import Module, Parameter

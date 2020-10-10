@@ -3,7 +3,8 @@ from ext import now
 from model import make_model, respond_to
 from model import load_model, save_model
 from model import sgd, adaptive_sgd
-from data import load_data, split_data, batchify_data
+from data_fourier import load_data as load_data_fourier, split_data, batchify_data
+from data_direct import load_data as load_data_direct
 
 from torch import no_grad
 
@@ -14,27 +15,29 @@ from matplotlib.pyplot import plot, show
 
 def main():
 
-    data = load_data()
     if config.fresh_model:
         save_model(make_model())
         model = load_model()
-        print('created model.')
+        print('created model.',end=' ')
     else:
         model = load_model()
         if not model:
             save_model(make_model())
             model = load_model()
-            print('created model.')
+            print('created model.',end=' ')
         else:
-            print('loaded model.')
+            print('loaded model.',end=' ')
+    print(f'desc: {config.creation_info}')
 
-    data, data_dev = split_data(data) # ; data = [e[:config.seq_window_len] for e in data] # TODO: !! rmove me !!
+    data = load_data_fourier() if config.do_fourier else load_data_direct()
+    data, data_dev = split_data(data)
+
     if not config.batch_size:
         config.batch_size = len(data_dev) if config.dev_ratio else len(data)
     elif config.batch_size > len(data):
         config.batch_size = len(data)
     
-    print(f'hm data: {len(data)}, hm dev: {len(data_dev)}, lr: {config.learning_rate}, \ntraining started @ {now()}')
+    print(f'hm data: {len(data)}, hm dev: {len(data_dev)}, bs: {config.batch_size}, lr: {config.learning_rate}, \ntraining started @ {now()}')
 
     data_losss, dev_losss = [], []
     if config.batch_size != len(data):
@@ -59,7 +62,8 @@ def main():
             sgd(model, batch_size=batch_size) if config.optimizer == 'sgd' else \
                 adaptive_sgd(model, batch_size=batch_size)
 
-        loss /= sum(len(sequence) for sequence in data)
+        # loss /= sum(len(sequence) for sequence in data)
+        loss = dev_loss(model, data)
         data_losss.append(loss)
         if config.dev_ratio:
             dev_losss.append(dev_loss(model, data_dev))
@@ -68,9 +72,9 @@ def main():
         if config.ckp_per_ep and ((ep+1)%config.ckp_per_ep==0):
                 save_model(model,config.model_path+f'_ckp{ep}')
 
-    data_losss.append(dev_loss(model, data))
-    if config.dev_ratio:
-        dev_losss.append(dev_loss(model, data_dev))
+    # data_losss.append(dev_loss(model, data))
+    # if config.dev_ratio:
+    #     dev_losss.append(dev_loss(model, data_dev))
 
     print(f'training ended @ {now()} \nfinal losses: {data_losss[-1]}, {dev_losss[-1] if config.dev_ratio else ""}', flush=True)
     show(plot(data_losss))

@@ -18,7 +18,7 @@ from librosa.feature import chroma_stft
 from librosa.feature import mfcc
 from librosa.feature.inverse import mfcc_to_audio
 
-from numpy import abs, log, power, e, sum, clip, max, argmax, min, argmin
+from numpy import abs, log, power, e, sum, clip, max, argmax, min, argmin, mean
 from numpy import zeros_like, zeros, array, tile
 from numpy import concatenate as cat
 from numpy import stack
@@ -29,6 +29,66 @@ from matplotlib.pyplot import plot, show
 from scipy.io.wavfile import write
 
 ##
+
+
+def main():
+
+    files = glob(config.data_path+'/*.wav') # + glob('data/*.mp3') # try ffmpeg -i input.mp3 output.wav
+
+    if not config.frequencies_to_pick:
+
+        # gather initial info from all files
+
+        frequency_strengths = zeros(len(config.frequencies_of_bins))
+
+        for file in files:
+            signal = load(file, config.sample_rate)[0]
+            spec = abs(stft(signal, config.fft_bins, config.fft_hop_len, config.fft_window_len))
+            # print('\tmax min initially:', max(spec), min(spec))
+            # show(specshow(spec, sr=config.sample_rate, hop_length=config.fft_hop_len))
+
+            frequency_strengths += spec.sum(1)/spec.shape[1]
+
+        max_strength = max(frequency_strengths)
+        strength_thr = max_strength/config.frequency_strength_thr
+
+        band_low_hz = 999_999
+        band_high_hz = -1
+
+        for frequency, strength in zip(config.frequencies_of_bins,frequency_strengths):
+            if strength>=strength_thr:
+                config.frequencies_to_pick.append(frequency)
+                if frequency < band_low_hz: band_low_hz = frequency
+                if frequency > band_high_hz: band_low_hz = frequency
+
+        # spec = cat([spec[config.frequencies_of_bins.index(i),:] for i in config.frequencies_to_pick], 0)
+        # print('\tmax min after bandpass:', max(spec), min(spec))
+        # show(specshow(spec, sr=config.sample_rate, hop_length=config.fft_hop_len))
+
+        print(f'with bandpass, timestep size: {len(config.frequencies_of_bins)} -> {len(config.frequencies_to_pick)}')
+        print(f'copy paste this line into frequencies_to_pick @ config: \n{config.frequencies_to_pick}')
+
+    # proceed to separately processing each file
+
+    converted = []
+
+    for file_id, file in enumerate(files):
+
+        print(f'reading: {file}')
+        song_id = [0 if i == file_id else 1 for i in range(len(files))]
+
+        # analysis
+        signal, sample_rate = load(file, config.sample_rate)
+        data, meta = audio_to_data(signal, song_id)
+        converted.append([data,meta])
+
+        # synthesis
+        signal_recons = data_to_audio(data,meta)
+        write(f'{file.split("/")[-1]}_{file_id}.wav', config.sample_rate, signal_recons)
+        signal_recons, sample_rate = load(f'{file.split("/")[-1]}_{file_id}.wav', config.sample_rate)
+
+    pickle_save(converted, config.data_path+'.pk')
+    print('saved data.')
 
 
 def data_to_audio(data,meta):
@@ -133,66 +193,6 @@ def audio_to_data(signal, song_id):
     print('\tfinal vector shape:', vector.shape)
 
     return vector, meta
-
-
-def main():
-
-    files = glob(config.data_path+'/*.wav') # + glob('data/*.mp3') # try ffmpeg -i input.mp3 output.wav
-
-    if not config.frequencies_to_pick:
-
-        # gather initial info from all files
-
-        frequency_strengths = zeros(len(config.frequencies_of_bins))
-
-        for file in files:
-            signal = load(file, config.sample_rate)[0]
-            spec = abs(stft(signal, config.fft_bins, config.fft_hop_len, config.fft_window_len))
-            # print('\tmax min initially:', max(spec), min(spec))
-            # show(specshow(spec, sr=config.sample_rate, hop_length=config.fft_hop_len))
-
-            frequency_strengths += spec.sum(1)/spec.shape[1]
-
-        max_strength = max(frequency_strengths)
-        strength_thr = max_strength/config.frequency_strength_thr
-
-        band_low_hz = 999_999
-        band_high_hz = -1
-
-        for frequency, strength in zip(config.frequencies_of_bins,frequency_strengths):
-            if strength>=strength_thr:
-                config.frequencies_to_pick.append(frequency)
-                if frequency < band_low_hz: band_low_hz = frequency
-                if frequency > band_high_hz: band_low_hz = frequency
-
-        # spec = cat([spec[config.frequencies_of_bins.index(i),:] for i in config.frequencies_to_pick], 0)
-        # print('\tmax min after bandpass:', max(spec), min(spec))
-        # show(specshow(spec, sr=config.sample_rate, hop_length=config.fft_hop_len))
-
-        print(f'with bandpass, timestep size: {len(config.frequencies_of_bins)} -> {len(config.frequencies_to_pick)}')
-        print(f'copy paste this line into frequencies_to_pick @ config: \n{config.frequencies_to_pick}')
-
-    # proceed to separately processing each file
-
-    converted = []
-
-    for file_id, file in enumerate(files):
-
-        print(f'reading: {file}')
-        song_id = [0 if i == file_id else 1 for i in range(len(files))]
-
-        # analysis
-        signal, sample_rate = load(file, config.sample_rate)
-        data, meta = audio_to_data(signal, song_id)
-        converted.append([data,meta])
-
-        # synthesis
-        signal_recons = data_to_audio(data,meta)
-        write(f'{file.split("/")[-1]}_{file_id}.wav', config.sample_rate, signal_recons)
-        signal_recons, sample_rate = load(f'{file.split("/")[-1]}_{file_id}.wav', config.sample_rate)
-
-    pickle_save(converted, config.data_path+'.pk')
-    print('saved data.')
 
 
 def load_data(with_meta=False):
